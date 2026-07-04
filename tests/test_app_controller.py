@@ -29,7 +29,7 @@ def test_placeholder_action_writes_log_message(tmp_path: Path) -> None:
 
     controller.placeholder_action("Проверить браузер")
 
-    assert messages[-1] == "Проверить браузер пока не реализовано."
+    assert messages[-1].endswith("Проверить браузер пока не реализовано.")
 
 
 def test_discover_browser_updates_state(tmp_path: Path) -> None:

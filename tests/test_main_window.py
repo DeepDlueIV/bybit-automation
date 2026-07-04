@@ -394,7 +394,7 @@ def test_main_window_fill_form_logs_runtime_error(qtbot, tmp_path: Path) -> None
 
     window.on_fill_form()
 
-    assert messages[-1] == "Не найден popup 'Стандартная P2P-торговля'."
+    assert messages[-1].endswith("Не найден popup 'Стандартная P2P-торговля'.")
     assert "Не удалось начать" in window.statusBar().currentMessage()
 
 

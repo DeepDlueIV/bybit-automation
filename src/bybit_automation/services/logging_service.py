@@ -12,6 +12,7 @@ class AppLogger:
         self._logger = logging.getLogger("bybit_automation")
         self._logger.setLevel(logging.INFO)
         self._log_file = log_file
+        self._last_message_at: datetime | None = None
         if self._log_file is not None:
             self._log_file.parent.mkdir(parents=True, exist_ok=True)
             session_started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -22,9 +23,14 @@ class AppLogger:
         self._callbacks.append(callback)
 
     def info(self, message: str) -> None:
-        self._logger.info(message)
+        now = datetime.now()
+        delta_seconds = 0.0 if self._last_message_at is None else (now - self._last_message_at).total_seconds()
+        self._last_message_at = now
+        formatted = f"{now.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]} | +{delta_seconds:.3f}s | {message}"
+
+        self._logger.info(formatted)
         if self._log_file is not None:
             with self._log_file.open("a", encoding="utf-8") as handle:
-                handle.write(f"{message}\n")
+                handle.write(f"{formatted}\n")
         for callback in self._callbacks:
-            callback(message)
+            callback(formatted)

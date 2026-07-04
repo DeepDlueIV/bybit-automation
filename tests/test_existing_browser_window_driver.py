@@ -113,6 +113,47 @@ class ToggleFallbackControl(NoCoordinateControl):
         self._checked = True
 
 
+class MockLogger:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def info(self, message: str) -> None:
+        self.messages.append(message)
+
+
+def test_wait_until_document_contains_returns_document_when_ready(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    document = FakeControl("Bybit", "Document", [FakeControl("Цена", "Text")])
+    window = FakeControl("Bybit", "Window", [document])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    result = driver._wait_until_document_contains("Bybit", ("Цена",), timeout_seconds=1, poll_seconds=0.1)
+
+    assert result is document
+
+
+def test_wait_until_document_contains_polls_until_ready(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    state = {"ready": False}
+    empty_document = FakeControl("Bybit", "Document", [])
+    ready_document = FakeControl("Bybit", "Document", [FakeControl("Цена", "Text")])
+
+    driver._find_window = lambda _: FakeControl("Bybit", "Window", [ready_document if state["ready"] else empty_document])  # type: ignore[method-assign]
+    times = iter([0.0, 0.1, 0.2, 0.3])
+    monkeypatch.setattr(driver_module.time, "time", lambda: next(times))
+
+    def fake_sleep(_seconds):
+        state["ready"] = True
+
+    monkeypatch.setattr(driver_module.time, "sleep", fake_sleep)
+
+    result = driver._wait_until_document_contains("Bybit", ("Цена",), timeout_seconds=1, poll_seconds=0.1)
+
+    assert result.window_text() == "Bybit"
+
+
 def test_read_sell_price_accepts_russian_document_title_and_data_item() -> None:
     driver = ExistingBrowserWindowDriver()
     document = FakeControl(

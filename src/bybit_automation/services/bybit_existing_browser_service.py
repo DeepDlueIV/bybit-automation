@@ -146,7 +146,9 @@ class BybitExistingBrowserService:
 
     def _is_missing_delete_button_error(self, error: RuntimeError) -> bool:
         message = str(error).lower()
-        return "кноп" in message and "удален" in message
+        has_button = "кноп" in message or "рєрЅрѕрї" in message or "рєр" in message
+        has_delete = "удален" in message or "сѓрґ" in message or "сѓ" in message
+        return has_button and has_delete
 
     def _delete_existing_advertisement_before_create(self, window_title: str) -> None:
         current_advertisement = self._safe_read_current_advertisement(
@@ -194,11 +196,12 @@ class BybitExistingBrowserService:
         self.logger.info(message)
         raise RuntimeError(message)
 
-    def create_advertisement(self, state: AppState) -> AdvertisementSnapshot:
+    def create_advertisement(self, state: AppState) -> AdvertisementSnapshot | None:
         started = self.fill_advertisement_form(state)
         if not started:
             raise RuntimeError("Не удалось начать создание объявления.")
-        return self._wait_for_created_advertisement(state.browser.window_title)
+        self.logger.info("После ввода пароля не жду появления объявления на Ads: Bybit сам обновит страницу.")
+        return None
 
     def search_merchant(
         self,
@@ -235,6 +238,7 @@ class BybitExistingBrowserService:
         self.logger.info("Открываю popup размещения объявления.")
         self.driver.open_standard_p2p_ad_form(window_title)
         self.logger.info("Открыл форму размещения объявления из Ads-вкладки.")
+        self.logger.info("Форма объявления готова к заполнению.")
 
         self.driver.select_trade_side(window_title, state.advertisement.trade_side)
         self.logger.info(f"Выбран тип объявления: {state.advertisement.trade_side}")

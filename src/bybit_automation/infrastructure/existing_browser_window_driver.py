@@ -25,6 +25,8 @@ class PaymentMethodState:
 class ExistingBrowserWindowDriver:
     ADS_URL = "https://www.bybit.com/ru-RU/p2p/merchant-admin/ads"
     SELL_URL = "https://www.bybit.com/ru-RU/p2p/sell/USDT/RUB"
+    FAST_ACTION_DELAY_SECONDS = 0.05
+    READY_POLL_SECONDS = 0.1
 
     def __init__(self, logger: AppLogger | None = None) -> None:
         self._logger = logger
@@ -126,6 +128,60 @@ class ExistingBrowserWindowDriver:
                 return True
         return False
 
+    def _wait_until_document_contains(
+        self,
+        window_title: str,
+        text_parts: tuple[str, ...],
+        *,
+        timeout_seconds: float,
+        poll_seconds: float | None = None,
+    ):
+        poll = self.READY_POLL_SECONDS if poll_seconds is None else poll_seconds
+        deadline = time.time() + timeout_seconds
+        last_error: Exception | None = None
+        while time.time() < deadline:
+            try:
+                window = self._find_window(window_title)
+                try:
+                    document = self._find_main_document(window)
+                except RuntimeError:
+                    document = self._find_first_document(window)
+                if self._document_contains_any_text(document, text_parts):
+                    return document
+            except RuntimeError as error:
+                last_error = error
+            time.sleep(poll)
+        detail = f" Последняя ошибка: {last_error}" if last_error is not None else ""
+        raise RuntimeError(f"Страница не стала готовой за {timeout_seconds:.1f}с. Ожидал текст: {text_parts}.{detail}")
+
+    def _wait_until_contains(
+        self,
+        window_title: str,
+        *,
+        text_part: str,
+        control_types: tuple[str, ...],
+        timeout_seconds: float,
+        poll_seconds: float | None = None,
+    ):
+        poll = self.READY_POLL_SECONDS if poll_seconds is None else poll_seconds
+        deadline = time.time() + timeout_seconds
+        last_error: Exception | None = None
+        while time.time() < deadline:
+            try:
+                return self._find_contains(self._find_window(window_title), text_part=text_part, control_types=control_types)
+            except RuntimeError as error:
+                last_error = error
+                time.sleep(poll)
+        detail = f" Последняя ошибка: {last_error}" if last_error is not None else ""
+        raise RuntimeError(f"Не дождался popup/элемента '{text_part}' за {timeout_seconds:.1f}с.{detail}")
+
+    def _wait_until_ad_form_ready(self, window_title: str):
+        return self._wait_until_document_contains(
+            window_title,
+            ("Фиксированная", "Общее количество", "Мин. сумма транзакции", "Макс. сумма транзакции"),
+            timeout_seconds=10,
+        )
+
     def _item_text(self, control) -> str:
         return control.window_text().strip()
 
@@ -209,36 +265,36 @@ class ExistingBrowserWindowDriver:
         try:
             control.invoke()
             self._log(f"click_best: invoke succeeded for '{text}'")
-            time.sleep(0.2)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         try:
             control.iface_invoke.Invoke()
             self._log(f"click_best: iface_invoke succeeded for '{text}'")
-            time.sleep(0.2)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         try:
             control.select()
             self._log(f"click_best: select succeeded for '{text}'")
-            time.sleep(0.2)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         try:
             control.iface_selection_item.Select()
             self._log(f"click_best: iface_selection_item succeeded for '{text}'")
-            time.sleep(0.2)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         control.set_focus()
         self._log(f"click_best: set_focus + send_keys fallback for '{text}'")
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
         send_keys("{ENTER}")
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def _set_checkbox_state(self, control, checked: bool) -> None:
         state = self._safe_toggle_state(control)
@@ -246,16 +302,16 @@ class ExistingBrowserWindowDriver:
             return
         try:
             control.toggle()
-            time.sleep(0.2)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
         except Exception:
             try:
                 control.iface_toggle.Toggle()
-                time.sleep(0.2)
+                time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             except Exception:
                 control.set_focus()
-                time.sleep(0.2)
+                time.sleep(self.FAST_ACTION_DELAY_SECONDS)
                 send_keys(" ")
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def _select_visible_payment_method(self, root, name: str) -> None:
         deadline = time.time() + 5
@@ -271,17 +327,17 @@ class ExistingBrowserWindowDriver:
                 label = self._find_exact(root, title=name, control_types=("Text", "ListItem", "Button"))
                 target = label.parent() if self._item_type(label) == "Text" else label
                 self._click_best(target)
-                time.sleep(0.2)
+                time.sleep(self.FAST_ACTION_DELAY_SECONDS)
                 return
             except RuntimeError:
-                time.sleep(0.2)
+                time.sleep(self.READY_POLL_SECONDS)
 
         raise RuntimeError(f"Не найден элемент {name}")
 
     def focus(self, window_title: str) -> None:
         window = self._find_window(window_title)
         window.set_focus()
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def _tab_items(self, window) -> list[object]:
         tabs: list[object] = []
@@ -343,12 +399,12 @@ class ExistingBrowserWindowDriver:
     def _open_url_in_new_tab(self, window_title: str, url: str) -> None:
         self.focus(window_title)
         send_keys("^t")
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
         send_keys("^l")
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
         send_keys(url, with_spaces=True)
         send_keys("{ENTER}")
-        time.sleep(1.0)
+        time.sleep(self.READY_POLL_SECONDS)
 
     def _activate_or_create_tab(self, window_title: str, target_url: str) -> None:
         window = self._find_window(window_title)
@@ -363,7 +419,7 @@ class ExistingBrowserWindowDriver:
                 )
                 continue
             self._click_best(control, allow_forbidden_text=True)
-            time.sleep(0.25)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             if self._url_matches(self._read_current_url(window), target_url):
                 return
 
@@ -391,7 +447,7 @@ class ExistingBrowserWindowDriver:
     def refresh_page(self, window_title: str) -> None:
         self.focus(window_title)
         send_keys("{F5}")
-        time.sleep(1.0)
+        time.sleep(self.READY_POLL_SECONDS)
 
     def _normalize_merchant_name(self, text: str) -> str:
         stripped = re.sub(r"[\W_]+", " ", text, flags=re.UNICODE).strip().lower()
@@ -685,7 +741,7 @@ class ExistingBrowserWindowDriver:
                 on_progress(page, 0, f"Открываю страницу {page}")
                 page_control = self._find_page_control(window_title, page)
                 self._click_best(page_control)
-                time.sleep(0.2)
+                time.sleep(self.READY_POLL_SECONDS)
             on_progress(page, 0, f"Читаю продавцов на странице {page}")
             document = self._find_main_document(self._find_window(window_title))
             candidates = self._extract_merchant_candidates(document)
@@ -720,12 +776,13 @@ class ExistingBrowserWindowDriver:
                     break
             except RuntimeError:
                 pass
-            time.sleep(0.5)
+            time.sleep(self.READY_POLL_SECONDS)
 
         self._activate_first_search_page(window_title)
         previous_candidates: list[str] | None = None
 
         for page in range(1, depth + 1):
+            page_started_at = time.time()
             if page > 1:
                 page_control = self._find_page_control(window_title, page)
                 self._click_best(page_control)
@@ -733,6 +790,8 @@ class ExistingBrowserWindowDriver:
             else:
                 document = self._find_main_document(self._find_window(window_title))
                 candidates = self._extract_merchant_candidates(document)
+            elapsed = time.time() - page_started_at
+            self._log(f"Сбор мерчантов: страница {page}, найдено {len(candidates)}, ожидание {elapsed:.3f}s.")
             all_merchants.extend(candidates)
             previous_candidates = candidates
 
@@ -751,7 +810,7 @@ class ExistingBrowserWindowDriver:
             latest_candidates = self._extract_merchant_candidates(document)
             if latest_candidates and latest_candidates != previous_candidates:
                 return latest_candidates
-            time.sleep(0.2)
+            time.sleep(self.READY_POLL_SECONDS)
         return latest_candidates
 
     def read_current_sell_price(self, window_title: str) -> str:
@@ -799,7 +858,7 @@ class ExistingBrowserWindowDriver:
             snippets = [self._item_text(control) for control in items[:15]]
             self.focus(window_title)
             send_keys("{PGDN}")
-            time.sleep(0.2)
+            time.sleep(self.READY_POLL_SECONDS)
 
         raise RuntimeError(
             "Не удалось прочитать цену на вкладке продажи USDT/RUB. "
@@ -820,7 +879,7 @@ class ExistingBrowserWindowDriver:
             open_button.click_input()
         else:
             self._click_best(open_button.parent() if self._item_type(open_button) == "Text" else open_button)
-        time.sleep(0.35)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
         popup_option = None
         popup_deadline = time.time() + 5
@@ -833,11 +892,11 @@ class ExistingBrowserWindowDriver:
                 )
                 break
             except RuntimeError:
-                time.sleep(0.2)
+                time.sleep(self.READY_POLL_SECONDS)
         if popup_option is None:
             raise RuntimeError("Не найден элемент, содержащий 'Стандартная P2P-торговля'.")
         self._click_best(popup_option.parent() if self._item_type(popup_option) == "Text" else popup_option)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -910,7 +969,7 @@ class ExistingBrowserWindowDriver:
         last_selected_side = self._read_selected_trade_side(document)
         for candidate in candidates:
             self._click_best(candidate.parent() if self._item_type(candidate) == "Text" else candidate)
-            time.sleep(0.2)
+            time.sleep(self.READY_POLL_SECONDS)
             document = self._find_main_document(self._find_window(window_title))
             last_selected_side = self._read_selected_trade_side(document)
             if last_selected_side == trade_side:
@@ -925,7 +984,7 @@ class ExistingBrowserWindowDriver:
         document = self._find_main_document(self._find_window(window_title))
         control = self._find_edit_after_label(document, "Фиксированная")
         control.iface_value.SetValue(price)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def set_payment_time(self, window_title: str, payment_time: str) -> None:
         document = self._find_main_document(self._find_window(window_title))
@@ -949,37 +1008,37 @@ class ExistingBrowserWindowDriver:
         if group is None:
             raise RuntimeError("Не удалось найти переключатель времени оплаты.")
         self._click_best(group)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
         option_mark = "30мин." if payment_time.startswith("30") else "15мин."
         window = self._find_window(window_title)
         option = self._find_exact(window, title=option_mark, control_types=("Text", "ListItem"))
         self._click_best(option.parent() if self._item_type(option) == "Text" else option)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def set_total_amount(self, window_title: str, total_amount: str) -> None:
         document = self._find_main_document(self._find_window(window_title))
         control = self._find_edit_after_label(document, "Общее количество")
         control.iface_value.SetValue(total_amount)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def set_minimum_transaction(self, window_title: str, minimum_transaction: str) -> None:
         document = self._find_main_document(self._find_window(window_title))
         control = self._find_edit_after_label(document, "Мин. сумма транзакции")
         control.iface_value.SetValue(minimum_transaction)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def set_maximum_transaction(self, window_title: str, maximum_transaction: str) -> None:
         document = self._find_main_document(self._find_window(window_title))
         control = self._find_edit_after_label(document, "Макс. сумма транзакции")
         control.iface_value.SetValue(maximum_transaction)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def set_notes(self, window_title: str, notes: str) -> None:
         document = self._find_main_document(self._find_window(window_title))
         control = self._find_edit_after_label(document, "Примечания")
         control.iface_value.SetValue(notes)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def ensure_counterparty_requirements(self, window_title: str, *, phone_linked: bool, email_linked: bool) -> None:
         if not phone_linked and not email_linked:
@@ -988,7 +1047,7 @@ class ExistingBrowserWindowDriver:
         document = self._find_main_document(self._find_window(window_title))
         opener = self._find_contains(document, text_part="Добавить", control_types=("Text",))
         opener.parent().click_input()
-        time.sleep(0.4)
+        time.sleep(self.READY_POLL_SECONDS)
 
         window = self._find_window(window_title)
         if phone_linked:
@@ -1000,7 +1059,7 @@ class ExistingBrowserWindowDriver:
 
         confirm = self._find_contains(window, text_part="Подтверд", control_types=("Button",))
         confirm.click_input()
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def ensure_payment_methods(self, window_title: str, methods: PaymentMethodState) -> None:
         requested = {
@@ -1024,7 +1083,8 @@ class ExistingBrowserWindowDriver:
         opener = self._find_contains(document, text_part="способами оплаты", control_types=("Button",))
         self.focus(window_title)
         self._click_best(opener)
-        time.sleep(0.4)
+        time.sleep(self.READY_POLL_SECONDS)
+        self._log("Popup способов оплаты открыт, проверяю способы оплаты.")
 
         for name, enabled in requested.items():
             if not enabled:
@@ -1035,7 +1095,7 @@ class ExistingBrowserWindowDriver:
         window = self._find_window(window_title)
         confirm = self._find_contains(window, text_part="Подтверд", control_types=("Button",))
         self._click_best(confirm)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def accept_terms(self, window_title: str) -> None:
         document = self._find_main_document(self._find_window(window_title))
@@ -1050,7 +1110,7 @@ class ExistingBrowserWindowDriver:
         document = self._find_main_document(self._find_window(window_title))
         button = self._find_exact(document, title="Разместить объявления", control_types=("Button",))
         self._click_best(button)
-        time.sleep(0.4)
+        time.sleep(self.READY_POLL_SECONDS)
 
     def enter_security_password(self, window_title: str, password: str) -> None:
         window = self._find_window(window_title)
@@ -1064,17 +1124,18 @@ class ExistingBrowserWindowDriver:
                 target = None
             if target is not None:
                 break
-            time.sleep(0.2)
+            time.sleep(self.READY_POLL_SECONDS)
         if target is None:
             raise RuntimeError("Не удалось найти поле финансового пароля в pop-up.")
+        self._log("Popup финансового пароля готов.")
         try:
             target.iface_value.SetValue(password)
         except (NoPatternInterfaceError, Exception):
             target.click_input()
             send_keys("^a")
-            time.sleep(0.2)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             send_keys(password, with_spaces=True)
-        time.sleep(0.2)
+        time.sleep(self.FAST_ACTION_DELAY_SECONDS)
         confirm = None
         for control in window.descendants():
             try:
@@ -1089,7 +1150,7 @@ class ExistingBrowserWindowDriver:
             send_keys("{ENTER}")
         else:
             self._click_best(confirm)
-        time.sleep(2.0)
+        time.sleep(self.READY_POLL_SECONDS)
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
