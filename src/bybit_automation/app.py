@@ -25,6 +25,7 @@ def build_main_window() -> MainWindow:
     from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
     from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
     from bybit_automation.services.merchant_cycle_service import MerchantCycleService
+    from bybit_automation.services.sound_notifier import TopPositionSoundNotifier
 
     app_paths = AppPaths.from_cwd()
     logger = AppLogger(log_file=app_paths.log_file)
@@ -34,10 +35,12 @@ def build_main_window() -> MainWindow:
         driver=ExistingBrowserWindowDriver(logger=logger),
         logger=logger,
     )
+    position_sound_notifier = TopPositionSoundNotifier()
     merchant_cycle_service = MerchantCycleService(
         gateway=bybit_existing_browser_service,
         logger=logger,
         found_accounts_file=app_paths.found_accounts_file,
+        position_sound_notifier=position_sound_notifier,
     )
     controller = AppController(
         settings_service=settings_service,
@@ -45,6 +48,7 @@ def build_main_window() -> MainWindow:
         browser_discovery_service=browser_discovery_service,
         merchant_cycle_service=merchant_cycle_service,
         bybit_existing_browser_service=bybit_existing_browser_service,
+        position_sound_notifier=position_sound_notifier,
     )
     return MainWindow(controller=controller, logger=logger)
 

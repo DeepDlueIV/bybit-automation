@@ -51,11 +51,17 @@ class LiveBybitGateway(Protocol):
         ...
 
 
+class PositionSoundNotifier(Protocol):
+    def notify_if_top_position(self, position: int) -> None:
+        ...
+
+
 @dataclass
 class MerchantCycleService:
     gateway: BybitGateway | LiveBybitGateway
     logger: AppLogger
     found_accounts_file: Path | None = None
+    position_sound_notifier: PositionSoundNotifier | None = None
     _stop_requested: bool = False
 
     def request_stop(self) -> None:
@@ -190,15 +196,15 @@ class MerchantCycleService:
         if self.found_accounts_file is None:
             return
         self.found_accounts_file.parent.mkdir(parents=True, exist_ok=True)
-        block = "\n".join(
-            [
-                f"страница {result.page}",
-                f"строка {result.position}/10",
-                f"id {result.advertisement_id}",
-                f"цена {result.price}",
-                "",
-            ]
-        )
+        lines = [
+            f"страница {result.page}",
+            f"строка {result.position}/10",
+            f"id {result.advertisement_id}",
+            f"цена {result.price}",
+        ]
+        if result.advertisement_created_at:
+            lines.append(f"дата объявления {result.advertisement_created_at}")
+        block = "\n".join([*lines, ""])
         with self.found_accounts_file.open("a", encoding="utf-8") as handle:
             handle.write(block)
 
@@ -212,6 +218,11 @@ class MerchantCycleService:
         self.logger.info(f"строка {search_result.position}/10")
         self.logger.info(f"id {advertisement.advertisement_id}")
         self.logger.info(f"цена {advertisement.price}")
+        if advertisement.created_at:
+            self.logger.info(f"дата объявления {advertisement.created_at}")
+        absolute_position = ((search_result.page - 1) * 10) + search_result.position
+        if self.position_sound_notifier is not None and 1 <= absolute_position <= 10:
+            self.position_sound_notifier.notify_if_top_position(absolute_position)
         message = "Аккаунт найден"
         return MerchantCycleResult(
             success=True,
@@ -220,6 +231,7 @@ class MerchantCycleService:
             message=message,
             advertisement_id=advertisement.advertisement_id,
             price=advertisement.price,
+            advertisement_created_at=advertisement.created_at,
             page=search_result.page,
             position=search_result.position,
         )

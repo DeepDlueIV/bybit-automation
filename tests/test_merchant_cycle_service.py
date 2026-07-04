@@ -74,6 +74,13 @@ def test_cycle_returns_failure_after_all_attempts() -> None:
 
 
 def test_live_cycle_recreates_ad_with_fresh_price_and_appends_found_record(tmp_path: Path) -> None:
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.positions: list[int] = []
+
+        def notify_if_top_position(self, position: int) -> None:
+            self.positions.append(position)
+
     class FakeGateway:
         def __init__(self) -> None:
             self.deleted: list[str] = []
@@ -82,8 +89,8 @@ def test_live_cycle_recreates_ad_with_fresh_price_and_appends_found_record(tmp_p
 
         def read_current_advertisement(self, window_title: str):
             if not self.created_prices:
-                return AdvertisementSnapshot("old-1", "77,50", "Покупка")
-            return AdvertisementSnapshot("new-1", self.created_prices[-1], "Покупка")
+                return AdvertisementSnapshot("old-1", "77,50", "Покупка", "2026-07-04 22:00:00")
+            return AdvertisementSnapshot("new-1", self.created_prices[-1], "Покупка", "2026-07-04 22:19:47")
 
         def delete_current_advertisement(self, window_title: str) -> None:
             self.deleted.append(window_title)
@@ -107,7 +114,13 @@ def test_live_cycle_recreates_ad_with_fresh_price_and_appends_found_record(tmp_p
     messages: list[str] = []
     logger.subscribe(messages.append)
     found_file = tmp_path / "found_accounts.txt"
-    service = MerchantCycleService(gateway=FakeGateway(), logger=logger, found_accounts_file=found_file)
+    notifier = FakeNotifier()
+    service = MerchantCycleService(
+        gateway=FakeGateway(),
+        logger=logger,
+        found_accounts_file=found_file,
+        position_sound_notifier=notifier,
+    )
 
     state = AppState()
     state.browser.window_title = "Bybit - ILYA BB - 1"
@@ -130,6 +143,8 @@ def test_live_cycle_recreates_ad_with_fresh_price_and_appends_found_record(tmp_p
     assert "строка 5/10" in found_file.read_text(encoding="utf-8")
     assert "id new-1" in found_file.read_text(encoding="utf-8")
     assert "цена 81,31" in found_file.read_text(encoding="utf-8")
+    assert "дата объявления 2026-07-04 22:19:47" in found_file.read_text(encoding="utf-8")
+    assert notifier.positions == []
 
 
 def test_live_cycle_stops_without_recreating_after_stop_request(tmp_path: Path) -> None:

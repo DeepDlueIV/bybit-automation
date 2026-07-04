@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from bybit_automation.models.app_state import AppState
 from bybit_automation.models.merchant_cycle import MerchantCycleResult
@@ -12,6 +12,19 @@ from bybit_automation.services.merchant_cycle_service import MerchantCycleServic
 from bybit_automation.services.settings_service import JsonSettingsService
 
 
+class PositionSoundNotifier(Protocol):
+    def notify_if_top_position(self, position: int) -> None:
+        ...
+
+
+def position_range_label(position: int) -> str:
+    if position < 1:
+        return ""
+    start = ((position - 1) // 10) * 10 + 1
+    end = start + 9
+    return f"{start}-{end}"
+
+
 class AppController:
     def __init__(
         self,
@@ -20,12 +33,24 @@ class AppController:
         browser_discovery_service: BrowserDiscoveryService | None = None,
         merchant_cycle_service: MerchantCycleService | None = None,
         bybit_existing_browser_service: BybitExistingBrowserService | None = None,
+        position_sound_notifier: PositionSoundNotifier | None = None,
     ) -> None:
         self._settings_service = settings_service
         self._logger = logger
         self._browser_discovery_service = browser_discovery_service
         self._merchant_cycle_service = merchant_cycle_service
         self._bybit_existing_browser_service = bybit_existing_browser_service
+        self._position_sound_notifier = position_sound_notifier
+        self._last_found_position = 0
+        self._last_found_position_range = ""
+
+    @property
+    def last_found_position(self) -> int:
+        return self._last_found_position
+
+    @property
+    def last_found_position_range(self) -> str:
+        return self._last_found_position_range
 
     def default_state(self) -> AppState:
         return AppState()
@@ -136,8 +161,13 @@ class AppController:
             self._logger.info(f"Цикл: аккаунт '{account_name}' не найден. Начинаю новую итерацию.")
             return False
 
-        snapshot = self._bybit_existing_browser_service.read_current_advertisement(state.browser.window_title)
+        try:
+            snapshot = self._bybit_existing_browser_service.read_current_advertisement(state.browser.window_title)
+        except Exception as error:
+            self._logger.info(f"Цикл: не удалось прочитать объявление: {error}")
+            snapshot = None
         self._append_found_account_from_cycle(account_name, found_position, snapshot)
+        self._record_found_position(found_position)
         self._logger.info(f"Цикл: аккаунт '{account_name}' найден на позиции {found_position}. Результат записан.")
         return True
 
@@ -151,13 +181,23 @@ class AppController:
     def _append_found_account_from_cycle(self, account_name: str, position: int, snapshot) -> None:
         found_file = Path("data") / "found_accounts.txt"
         found_file.parent.mkdir(parents=True, exist_ok=True)
+        self._logger.info(f"Записываю аккаунт '{account_name}' позиция {position} в {found_file}")
         with found_file.open("a", encoding="utf-8") as handle:
             handle.write(f"{account_name}\n")
             handle.write(f"Позиция {position}\n")
             if snapshot is not None:
                 handle.write(f"ID {snapshot.advertisement_id}\n")
                 handle.write(f"Цена {snapshot.price}\n")
+                if snapshot.created_at:
+                    handle.write(f"Дата объявления {snapshot.created_at}\n")
             handle.write("\n")
+        self._logger.info(f"Запись '{account_name}' завершена.")
+
+    def _record_found_position(self, position: int) -> None:
+        self._last_found_position = position
+        self._last_found_position_range = position_range_label(position)
+        if self._position_sound_notifier is not None and 1 <= position <= 10:
+            self._position_sound_notifier.notify_if_top_position(position)
 
     def find_my_account(self, state: AppState) -> None:
         if self._bybit_existing_browser_service is None:
@@ -189,7 +229,7 @@ class AppController:
 
         try:
             snapshot = self._bybit_existing_browser_service.read_current_advertisement(state.browser.window_title)
-        except (RuntimeError, KeyError) as error:
+        except Exception as error:
             self._logger.info(f"Не удалось прочитать объявление: {error}")
             snapshot = None
 
@@ -200,8 +240,11 @@ class AppController:
             if snapshot:
                 f.write(f"ID {snapshot.advertisement_id}\n")
                 f.write(f"Цена {snapshot.price}\n")
+                if snapshot.created_at:
+                    f.write(f"Дата объявления {snapshot.created_at}\n")
             f.write("\n")
 
+        self._record_found_position(found_idx)
         self._logger.info(f"Аккаунт '{account_name}' найден на позиции {found_idx}. Данные добавлены в found_accounts.txt.")
 
     def fetch_current_price(self, state: AppState) -> AppState:

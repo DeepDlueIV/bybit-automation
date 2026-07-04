@@ -15,6 +15,13 @@ from PySide6.QtWidgets import (
 from bybit_automation.models.app_state import SearchSettings
 
 
+def _position_range_label(position: int) -> str:
+    if position < 1:
+        return ""
+    start = ((position - 1) // 10) * 10 + 1
+    return f"{start}-{start + 9}"
+
+
 class SearchSection(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -32,6 +39,7 @@ class SearchSection(QWidget):
         self.current_page_label = QLabel("")
         self.current_position_label = QLabel("")
         self.search_status_label = QLabel("")
+        self.last_found_position_label = QLabel("Последняя найдена позиция: не найдено")
 
         group = QGroupBox("Поиск")
         form = QFormLayout()
@@ -45,6 +53,7 @@ class SearchSection(QWidget):
         cycle_group = QGroupBox("Цикл")
         cycle_layout = QVBoxLayout()
         cycle_layout.addWidget(buttons_row)
+        cycle_layout.addWidget(self.last_found_position_label)
         cycle_group.setLayout(cycle_layout)
         self.cycle_group = cycle_group
 
@@ -60,6 +69,11 @@ class SearchSection(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(group)
+
+    def set_last_found_position(self, position: int) -> None:
+        range_text = _position_range_label(position)
+        value = range_text or "не найдено"
+        self.last_found_position_label.setText(f"Последняя найдена позиция: {value}")
 
     def get_state(self) -> SearchSettings:
         return SearchSettings(

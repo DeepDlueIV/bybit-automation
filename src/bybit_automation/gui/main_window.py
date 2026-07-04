@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 from bybit_automation.controllers.app_controller import AppController
 from bybit_automation.gui.sections.advertisement_section import AdvertisementSection
 from bybit_automation.gui.sections.browser_section import BrowserSection
-from bybit_automation.gui.sections.last_result_section import LastResultSection
 from bybit_automation.gui.sections.log_section import LogSection
 from bybit_automation.gui.sections.search_section import SearchSection
 from bybit_automation.models.app_state import AppState
@@ -70,6 +69,7 @@ class MerchantSearchWorker(QObject):
 
 class ListingCycleWorker(QObject):
     progress = Signal(str)
+    found_position = Signal(int)
     finished = Signal(str)
     failed = Signal(str)
 
@@ -92,6 +92,9 @@ class ListingCycleWorker(QObject):
                     self._state, stop_check=lambda: self._stop_requested
                 )
                 if found:
+                    position = getattr(self._controller, "last_found_position", 0)
+                    if position:
+                        self.found_position.emit(position)
                     self.progress.emit("Цикл: аккаунт найден, результат записан. Начинаю новую итерацию.")
                 else:
                     self.progress.emit("Цикл: аккаунт не найден. Начинаю новую итерацию.")
@@ -117,7 +120,6 @@ class MainWindow(QMainWindow):
         self.browser_section = BrowserSection()
         self.advertisement_section = AdvertisementSection()
         self.search_section = SearchSection()
-        self.last_result_section = LastResultSection()
         self.log_section = LogSection()
 
         self._build_layout()
@@ -139,7 +141,6 @@ class MainWindow(QMainWindow):
 
         top_row = QHBoxLayout()
         top_row.addWidget(self.browser_section, 1)
-        top_row.addWidget(self.last_result_section, 1)
 
         main_layout.addLayout(top_row)
         main_layout.addWidget(self.advertisement_section)
@@ -189,14 +190,12 @@ class MainWindow(QMainWindow):
             browser=self.browser_section.get_state(),
             advertisement=self.advertisement_section.get_state(),
             search=self.search_section.get_state(),
-            last_result=self.last_result_section.get_state(),
         )
 
     def apply_state(self, state: AppState) -> None:
         self.browser_section.set_state(state.browser)
         self.advertisement_section.set_state(state.advertisement)
         self.search_section.set_state(state.search)
-        self.last_result_section.set_state(state.last_result)
 
     def _set_search_running(self, running: bool) -> None:
         self.search_section.start_search_button.setEnabled(not running)
@@ -266,6 +265,9 @@ class MainWindow(QMainWindow):
     def on_start_search(self) -> None:
         state = self.collect_state()
         self._controller.find_my_account(state)
+        position = getattr(self._controller, "last_found_position", 0)
+        if position:
+            self.search_section.set_last_found_position(position)
 
     def on_start_cycle(self) -> None:
         if self._cycle_thread is not None:
@@ -275,6 +277,7 @@ class MainWindow(QMainWindow):
         self._cycle_worker.moveToThread(self._cycle_thread)
         self._cycle_thread.started.connect(self._cycle_worker.run)
         self._cycle_worker.progress.connect(self._on_cycle_progress)
+        self._cycle_worker.found_position.connect(self.search_section.set_last_found_position)
         self._cycle_worker.finished.connect(self._on_cycle_finished)
         self._cycle_worker.failed.connect(self._on_cycle_failed)
         self._cycle_worker.finished.connect(self._cleanup_cycle_thread)
@@ -358,10 +361,7 @@ class MainWindow(QMainWindow):
         if position:
             self.search_section.current_position_label.setText(f"{position}/10")
         if success:
-            self.last_result_section.price_label.setText(price)
-            self.last_result_section.advertisement_id_label.setText(advertisement_id)
-            self.last_result_section.page_label.setText(str(page))
-            self.last_result_section.position_label.setText(f"{position}/10")
+            self.search_section.set_last_found_position(position)
             QMessageBox.information(self, "Поиск завершён", "Аккаунт найден")
             self.status_bar.showMessage("Аккаунт найден")
         elif stopped:

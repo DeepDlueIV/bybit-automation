@@ -57,7 +57,17 @@ def test_search_section_has_cycle_group_with_start_and_stop_buttons(qtbot) -> No
     assert section.find_account_button.text() == "Найти свой акк"
     assert section.start_search_button.text() == "Старт"
     assert section.stop_search_button.text() == "Стоп"
+    assert section.last_found_position_label.text() == "Последняя найдена позиция: не найдено"
     assert [group.title() for group in section.findChildren(QGroupBox)] == ["Поиск"]
+
+
+def test_search_section_updates_last_found_position_range(qtbot) -> None:
+    section = SearchSection()
+    qtbot.addWidget(section)
+
+    section.set_last_found_position(17)
+
+    assert section.last_found_position_label.text() == "Последняя найдена позиция: 11-20"
 
 
 def test_main_window_places_cycle_block_outside_search_group(qtbot, tmp_path: Path) -> None:
@@ -69,6 +79,7 @@ def test_main_window_places_cycle_block_outside_search_group(qtbot, tmp_path: Pa
 
     assert "Поиск" in group_titles
     assert "Цикл" in group_titles
+    assert "Последний результат" not in group_titles
 
 
 def test_main_window_find_my_account_button_triggers_controller(qtbot, tmp_path: Path) -> None:
@@ -418,8 +429,5 @@ def test_main_window_updates_search_progress_and_result_labels(qtbot, tmp_path: 
     assert window.search_section.current_page_label.text() == "2"
     assert window.search_section.current_position_label.text() == "5/10"
     assert window.search_section.search_status_label.text() == "Аккаунт найден"
-    assert window.last_result_section.price_label.text() == "81,31"
-    assert window.last_result_section.advertisement_id_label.text() == "ad-77"
-    assert window.last_result_section.page_label.text() == "2"
-    assert window.last_result_section.position_label.text() == "5/10"
+    assert window.search_section.last_found_position_label.text() == "Последняя найдена позиция: 1-10"
     assert shown_messages == [("Поиск завершён", "Аккаунт найден")]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bybit_automation.controllers.app_controller import AppController
+from bybit_automation.controllers.app_controller import AppController, position_range_label
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
 from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
@@ -165,6 +165,13 @@ def test_start_and_stop_merchant_search_use_service(tmp_path: Path) -> None:
 def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.positions: list[int] = []
+
+        def notify_if_top_position(self, position: int) -> None:
+            self.positions.append(position)
+
     class FakeExistingBrowserService:
         def __init__(self) -> None:
             self.calls: list[tuple] = []
@@ -179,13 +186,15 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
 
         def read_current_advertisement(self, window_title: str):
             self.calls.append(("read_current_advertisement", window_title))
-            return AdvertisementSnapshot("ad-55", "80,51", "Покупка")
+            return AdvertisementSnapshot("ad-55", "80,51", "Покупка", "2026-07-04 22:19:47")
 
     service = FakeExistingBrowserService()
+    notifier = FakeNotifier()
     controller = AppController(
         JsonSettingsService(tmp_path / "settings.json"),
         AppLogger(),
         bybit_existing_browser_service=service,
+        position_sound_notifier=notifier,
     )
     state = controller.default_state()
     state.browser.window_title = "Bybit"
@@ -208,6 +217,10 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
     found_text = (tmp_path / "data" / "found_accounts.txt").read_text(encoding="utf-8")
     assert "Mannequin" in found_text
     assert "ad-55" in found_text
+    assert "Цена 80,51" in found_text
+    assert "Дата объявления 2026-07-04 22:19:47" in found_text
+    assert controller.last_found_position_range == "1-10"
+    assert notifier.positions == [2]
 
 
 def test_run_listing_cycle_iteration_returns_false_when_account_not_found(tmp_path: Path, monkeypatch) -> None:
@@ -242,3 +255,82 @@ def test_run_listing_cycle_iteration_returns_false_when_account_not_found(tmp_pa
 
     assert found is False
     assert service.read_current_advertisement_called is False
+
+
+def test_position_range_label_groups_absolute_positions() -> None:
+    assert position_range_label(1) == "1-10"
+    assert position_range_label(10) == "1-10"
+    assert position_range_label(11) == "11-20"
+    assert position_range_label(20) == "11-20"
+    assert position_range_label(0) == ""
+
+
+def test_find_my_account_records_advertisement_created_at_and_alerts_top_position(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.positions: list[int] = []
+
+        def notify_if_top_position(self, position: int) -> None:
+            self.positions.append(position)
+
+    class FakeExistingBrowserService:
+        def read_current_advertisement(self, window_title: str):
+            return AdvertisementSnapshot("ad-77", "81,02", "Покупка", "2026-07-04 22:19:47")
+
+    temp_path = tmp_path / "data" / "merchants_temp.txt"
+    temp_path.parent.mkdir(parents=True)
+    temp_path.write_text("Alpha\nMannequin\nOmega\n", encoding="utf-8")
+    notifier = FakeNotifier()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_existing_browser_service=FakeExistingBrowserService(),
+        position_sound_notifier=notifier,
+    )
+    state = controller.default_state()
+    state.browser.window_title = "Bybit"
+    state.search.account_name = "Mannequin"
+
+    controller.find_my_account(state)
+
+    found_text = (tmp_path / "data" / "found_accounts.txt").read_text(encoding="utf-8")
+    assert "ID ad-77" in found_text
+    assert "Цена 81,02" in found_text
+    assert "Дата объявления 2026-07-04 22:19:47" in found_text
+    assert controller.last_found_position_range == "1-10"
+    assert notifier.positions == [2]
+
+
+def test_run_listing_cycle_writes_account_when_read_snapshot_raises_oserror(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeExistingBrowserService:
+        def create_advertisement(self, state):
+            return AdvertisementSnapshot("ad-1", "80,00", "Покупка")
+
+        def collect_all_merchants(self, window_title: str, depth: int):
+            return ["Alpha", "Mannequin", "Omega"]
+
+        def read_current_advertisement(self, window_title: str):
+            raise OSError("UIA element is stale")
+
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_existing_browser_service=FakeExistingBrowserService(),
+    )
+    state = controller.default_state()
+    state.browser.window_title = "Bybit"
+    state.search.account_name = "Mannequin"
+    state.search.depth = "4"
+
+    found = controller.run_listing_cycle_iteration(state)
+
+    assert found is True
+    found_text = (tmp_path / "data" / "found_accounts.txt").read_text(encoding="utf-8")
+    assert "Mannequin" in found_text
+    assert "Позиция 2" in found_text

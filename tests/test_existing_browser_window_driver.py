@@ -658,6 +658,7 @@ def test_ensure_payment_methods_clicks_visible_text_cards_when_checkbox_has_no_l
     ]
 
 
+
 def test_ensure_payment_methods_waits_for_bank_transfer_text(monkeypatch) -> None:
     driver = ExistingBrowserWindowDriver()
     clicked: list[str] = []
@@ -668,22 +669,30 @@ def test_ensure_payment_methods_waits_for_bank_transfer_text(monkeypatch) -> Non
     driver._find_main_document = lambda _: document  # type: ignore[method-assign]
     driver._find_contains = lambda root, **kwargs: ClickTrackingControl("Управление способами оплаты", "Button", clicked) if "способами оплаты" in kwargs["text_part"].lower() else ClickTrackingControl("Подтвердить", "Button", clicked)  # type: ignore[method-assign]
     driver._click_best = lambda control: clicked.append(control.window_text())  # type: ignore[method-assign]
-    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
 
-    attempts = iter([0, 1, 2])
     bank = ClickTrackingControl("Bank Transfer", "Text", clicked)
+    attempts = {"count": 0}
+    clock = {"now": 0.0}
 
-    def fake_find_exact(root, **kwargs):
-        title = kwargs["title"]
-        control_types = kwargs["control_types"]
-        if title == "Bank Transfer" and "CheckBox" not in control_types:
-            if next(attempts) < 2:
-                raise RuntimeError("Не найден элемент")
-            return bank
-        raise RuntimeError("Не найден элемент")
+    def fake_time() -> float:
+        return clock["now"]
 
-    driver._find_exact = fake_find_exact  # type: ignore[method-assign]
-    monkeypatch.setattr(driver_module.time, "time", lambda: 0.0)
+    def fake_sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    def fake_items(root):
+        if root is document:
+            return []
+        if root is window:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                return []
+            return [bank]
+        return []
+
+    monkeypatch.setattr(driver, "_interactive_items", fake_items)
+    monkeypatch.setattr(driver_module.time, "time", fake_time)
+    monkeypatch.setattr(driver_module.time, "sleep", fake_sleep)
 
     driver.ensure_payment_methods(
         "Bybit",
@@ -699,6 +708,7 @@ def test_ensure_payment_methods_waits_for_bank_transfer_text(monkeypatch) -> Non
         "Bank Transfer",
         "Подтвердить",
     ]
+    assert attempts["count"] == 3
 
 
 def test_ensure_payment_methods_opens_popup_via_safe_click(monkeypatch) -> None:
@@ -716,14 +726,16 @@ def test_ensure_payment_methods_opens_popup_via_safe_click(monkeypatch) -> None:
     opener_clicked: list[str] = []
     driver._click_best = lambda control: opener_clicked.append(control.window_text())  # type: ignore[method-assign]
 
-    def fake_find_exact(root, **kwargs):
-        title = kwargs["title"]
-        control_types = kwargs["control_types"]
-        if title == "Bank Transfer" and "CheckBox" not in control_types:
-            return ClickTrackingControl("Bank Transfer", "Text", clicked)
-        raise RuntimeError("Не найден элемент")
+    bank = ClickTrackingControl("Bank Transfer", "Text", clicked)
 
-    driver._find_exact = fake_find_exact  # type: ignore[method-assign]
+    def fake_items(root):
+        if root is document:
+            return []
+        if root is window:
+            return [bank]
+        return []
+
+    monkeypatch.setattr(driver, "_interactive_items", fake_items)
 
     driver.ensure_payment_methods(
         "Bybit",
@@ -739,6 +751,8 @@ def test_ensure_payment_methods_opens_popup_via_safe_click(monkeypatch) -> None:
         "Bank Transfer",
         "Подтвердить",
     ]
+
+
 def test_read_current_advertisement_extracts_snapshot_from_ads_listing() -> None:
     driver = ExistingBrowserWindowDriver()
     document = FakeControl(
@@ -746,6 +760,7 @@ def test_read_current_advertisement_extracts_snapshot_from_ads_listing() -> None
         "Document",
         descendants=[
             FakeControl("Покупка USDT", "Text"),
+            FakeControl("2026-07-04 22:19:47", "Text"),
             FakeControl("2072529315394842624", "Text"),
             FakeControl("80,00 RUB", "Text"),
         ],
@@ -757,7 +772,29 @@ def test_read_current_advertisement_extracts_snapshot_from_ads_listing() -> None
 
     result = driver.read_current_advertisement("Bybit")
 
-    assert result == AdvertisementSnapshot("2072529315394842624", "80,00", "Покупка")
+    assert result == AdvertisementSnapshot("2072529315394842624", "80,00", "Покупка", "2026-07-04 22:19:47")
+
+
+def test_read_current_advertisement_finds_datetime_in_custom_element() -> None:
+    driver = ExistingBrowserWindowDriver()
+    document = FakeControl(
+        "Мои объявления",
+        "Document",
+        descendants=[
+            FakeControl("Покупка USDT", "Text"),
+            FakeControl("2072529315394842624", "Text"),
+            FakeControl("80,00 RUB", "Text"),
+            FakeControl("2026-07-04 22:19:47", "Custom"),
+        ],
+    )
+    window = FakeControl("Bybit", "Window", [document])
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.ADS_URL  # type: ignore[method-assign]
+
+    result = driver.read_current_advertisement("Bybit")
+
+    assert result == AdvertisementSnapshot("2072529315394842624", "80,00", "Покупка", "2026-07-04 22:19:47")
 
 
 def test_search_merchant_returns_page_and_position_for_normalized_match(monkeypatch) -> None:
@@ -1124,6 +1161,189 @@ def test_select_trade_side_skips_inert_text_and_verifies_buy_side_selected(monke
 
 
 
+def test_select_trade_side_moves_past_inert_choice_without_two_second_stall(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    summary = FakeControl("Продажа USDT", "Text")
+
+    class InertChoice(ClickTrackingControl):
+        def click_input(self) -> None:
+            self._clicked.append("inert:" + self.window_text())
+
+    class WorkingChoice(ClickTrackingControl):
+        def click_input(self) -> None:
+            self._clicked.append("active:" + self.window_text())
+            summary._title = "Покупка USDT"
+
+    inert = InertChoice("Покупка", "Text", clicked)
+    working = WorkingChoice("Покупка", "Text", clicked)
+    document = FakeControl(
+        "Create",
+        "Document",
+        descendants=[
+            summary,
+            inert,
+            working,
+            FakeControl("Продажа", "Text"),
+        ],
+    )
+
+    clock = {"now": 0.0}
+    sleeps: list[float] = []
+
+    def fake_time() -> float:
+        return clock["now"]
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
+
+    driver._find_window = lambda _: FakeControl("Bybit", "Window")  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._click_best = lambda control, **kwargs: control.click_input()  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "time", fake_time)
+    monkeypatch.setattr(driver_module.time, "sleep", fake_sleep)
+
+    driver.select_trade_side("Bybit", "Покупка")
+
+    assert clicked == ["inert:Покупка", "active:Покупка"]
+    assert sum(sleeps) < 1.0
+
+
+def test_select_trade_side_reuses_initial_items_snapshot(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    summary = FakeControl("Продажа USDT", "Text")
+
+    class WorkingChoice(ClickTrackingControl):
+        def click_input(self) -> None:
+            self._clicked.append(self.window_text())
+            summary._title = "Покупка USDT"
+
+    choice = WorkingChoice("Покупка", "Text", clicked)
+    document = FakeControl(
+        "Create",
+        "Document",
+        descendants=[
+            summary,
+            choice,
+            FakeControl("Продажа", "Text"),
+        ],
+    )
+    scan_count = {"count": 0}
+
+    def fake_interactive_items(root):
+        assert root is document
+        scan_count["count"] += 1
+        return document.descendants()
+
+    driver._find_window = lambda _: FakeControl("Bybit", "Window")  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._click_best = lambda control, **kwargs: control.click_input()  # type: ignore[method-assign]
+    monkeypatch.setattr(driver, "_interactive_items", fake_interactive_items)
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver.select_trade_side("Bybit", "Покупка")
+
+    assert clicked == ["Покупка"]
+    assert scan_count["count"] <= 3
+
+
+def test_select_trade_side_uses_single_final_scan_after_inert_candidates(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    summary = FakeControl("Продажа USDT", "Text")
+
+    class InertChoice(ClickTrackingControl):
+        def click_input(self) -> None:
+            self._clicked.append("inert:" + self.window_text())
+
+    class WorkingChoice(ClickTrackingControl):
+        def click_input(self) -> None:
+            self._clicked.append("active:" + self.window_text())
+            summary._title = "Покупка USDT"
+
+    document = FakeControl(
+        "Create",
+        "Document",
+        descendants=[
+            summary,
+            InertChoice("Покупка", "Text", clicked),
+            InertChoice("Покупка", "Text", clicked),
+            WorkingChoice("Покупка", "Text", clicked),
+            FakeControl("Продажа", "Text"),
+        ],
+    )
+    scan_count = {"count": 0}
+
+    def fake_interactive_items(root):
+        assert root is document
+        scan_count["count"] += 1
+        return document.descendants()
+
+    driver._find_window = lambda _: FakeControl("Bybit", "Window")  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._click_best = lambda control, **kwargs: control.click_input()  # type: ignore[method-assign]
+    monkeypatch.setattr(driver, "_interactive_items", fake_interactive_items)
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver.select_trade_side("Bybit", "Покупка")
+
+    assert clicked == ["inert:Покупка", "inert:Покупка", "active:Покупка"]
+    assert scan_count["count"] <= 3
+
+
+def test_ensure_payment_methods_uses_single_popup_scan_for_visible_cards(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    window = FakeControl("Create", "Window")
+    document = FakeControl("Create document", "Document")
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._find_contains = lambda root, **kwargs: ClickTrackingControl("Управление способами оплаты", "Button", clicked) if "способами оплаты" in kwargs["text_part"].lower() else ClickTrackingControl("Подтвердить", "Button", clicked)  # type: ignore[method-assign]
+    driver._click_best = lambda control: clicked.append(control.window_text())  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    bank = ClickTrackingControl("Bank Transfer", "Text", clicked)
+    mobile = ClickTrackingControl("Mobile Top-up", "Text", clicked)
+    cash = ClickTrackingControl("Cash Deposit to Bank", "Text", clicked)
+    popup_scan_count = {"window": 0}
+
+    def fake_items(root):
+        if root is document:
+            return []
+        if root is window:
+            popup_scan_count["window"] += 1
+            return [bank, mobile, cash]
+        return []
+
+    monkeypatch.setattr(driver, "_interactive_items", fake_items)
+
+    def forbidden_find_exact(*_args, **_kwargs):
+        raise AssertionError("visible popup cards should be reused from a single scan")
+
+    driver._find_exact = forbidden_find_exact  # type: ignore[method-assign]
+
+    driver.ensure_payment_methods(
+        "Bybit",
+        driver_module.PaymentMethodState(
+            bank_transfer=True,
+            mobile_top_up=True,
+            cash_deposit=True,
+        ),
+    )
+
+    assert clicked == [
+        "Управление способами оплаты",
+        "Bank Transfer",
+        "Mobile Top-up",
+        "Cash Deposit to Bank",
+        "Подтвердить",
+    ]
+    assert popup_scan_count["window"] == 1
+
+
 def test_search_merchant_does_not_click_text_page_controls_with_keyboard_fallback(monkeypatch) -> None:
     driver = ExistingBrowserWindowDriver()
     clicked: list[str] = []
@@ -1349,14 +1569,18 @@ def test_collect_all_merchants_starts_from_first_page_before_collecting(monkeypa
 
     driver._find_window = lambda _: window  # type: ignore[method-assign]
     driver._read_current_url = lambda _: driver.SELL_URL  # type: ignore[method-assign]
-    driver.open_url = lambda _, url: opened_urls.append(url)  # type: ignore[method-assign]
+    def fake_open_url(_window_title, url):
+        opened_urls.append(url)
+        current_page["value"] = 1
+
+    driver.open_url = fake_open_url  # type: ignore[method-assign]
     driver._find_main_document = lambda _: FakeControl("Sell", "Document", descendants=pages[current_page["value"]])  # type: ignore[method-assign]
     monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
 
     merchants = driver.collect_all_merchants("Bybit", 2)
 
     assert merchants == ["Pakpakly", "Milano", "Teacher_pro", "Garant"]
-    assert clicked_pages == ["1", "2"]
+    assert clicked_pages == ["2"]
     assert opened_urls == [driver.SELL_URL]
 
 
@@ -1412,7 +1636,7 @@ def test_collect_all_merchants_waits_for_next_page_content_before_collecting(mon
     merchants = driver.collect_all_merchants("Bybit", 2)
 
     assert merchants == ["Pakpakly", "Milano", "Teacher_pro", "Garant"]
-    assert clicked_pages == ["1", "2"]
+    assert clicked_pages == ["2"]
 
 
 def test_read_current_sell_price_resets_scroll_to_top_before_scanning(monkeypatch) -> None:
@@ -1454,3 +1678,183 @@ def test_read_current_sell_price_resets_scroll_to_top_before_scanning(monkeypatc
 
     assert result == "77,29"
     assert "keys:{HOME}" in events
+
+
+def test_click_best_does_not_log_regular_success_path(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    logs: list[str] = []
+
+    class LocalLogger:
+        def info(self, message: str) -> None:
+            logs.append(message)
+
+    driver._logger = LocalLogger()
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver._click_best(FakeControl("Обычная кнопка", "Button"))
+
+    assert logs == []
+
+
+def test_search_merchant_waits_for_new_page_candidates_before_matching(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    current_page = {"value": 1}
+    pending_page = {"value": None}
+    pending_reads = {"value": 0}
+    clicked_pages: list[str] = []
+    window = FakeControl("Bybit", "Window")
+
+    class PageControl(ClickTrackingControl):
+        def __init__(self, title: str) -> None:
+            super().__init__(title, "ListItem", clicked_pages)
+
+        def invoke(self) -> None:
+            clicked_pages.append(self.window_text())
+            if self.window_text() == "1":
+                current_page["value"] = 1
+                pending_page["value"] = None
+                pending_reads["value"] = 0
+                return
+            pending_page["value"] = int(self.window_text())
+            pending_reads["value"] = 2
+
+    pages = {
+        1: [
+            FakeControl("Мерчант", "Text"),
+            FakeControl("Pakpakly", "Text"),
+            PageControl("1"),
+            PageControl("2"),
+        ],
+        2: [
+            FakeControl("Мерчант", "Text"),
+            FakeControl("Milano", "Text"),
+            PageControl("1"),
+            PageControl("2"),
+        ],
+    }
+
+    def fake_document(_window):
+        if pending_page["value"] is not None:
+            if pending_reads["value"] > 0:
+                pending_reads["value"] -= 1
+            else:
+                current_page["value"] = pending_page["value"]
+                pending_page["value"] = None
+        return FakeControl("Sell", "Document", descendants=pages[current_page["value"]])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.SELL_URL  # type: ignore[method-assign]
+    driver._find_main_document = fake_document  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    result = driver.search_merchant(
+        "Bybit",
+        "milano",
+        2,
+        stop_requested=lambda: False,
+        on_progress=lambda *_: None,
+    )
+
+    assert result == MerchantSearchResult(found=True, page=2, position=1, matched_name="Milano")
+    assert clicked_pages == ["1", "2"]
+
+
+def test_collect_all_merchants_does_not_reclick_first_page_after_open_url(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    current_page = {"value": 1}
+    clicked_pages: list[str] = []
+    opened_urls: list[str] = []
+    window = FakeControl("Bybit", "Window")
+
+    class PageControl(ClickTrackingControl):
+        def __init__(self, title: str) -> None:
+            super().__init__(title, "ListItem", clicked_pages)
+
+        def invoke(self) -> None:
+            clicked_pages.append(self.window_text())
+            current_page["value"] = int(self.window_text())
+
+    pages = {
+        1: [
+            FakeControl("Мерчант", "Text"),
+            FakeControl("Pakpakly", "Text"),
+            FakeControl("Milano", "Text"),
+            PageControl("1"),
+            PageControl("2"),
+        ],
+        2: [
+            FakeControl("Мерчант", "Text"),
+            FakeControl("Teacher_pro", "Text"),
+            FakeControl("Garant", "Text"),
+            PageControl("1"),
+            PageControl("2"),
+        ],
+    }
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.SELL_URL  # type: ignore[method-assign]
+    driver.open_url = lambda _, url: opened_urls.append(url)  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: FakeControl("Sell", "Document", descendants=pages[current_page["value"]])  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    merchants = driver.collect_all_merchants("Bybit", 2)
+
+    assert merchants == ["Pakpakly", "Milano", "Teacher_pro", "Garant"]
+    assert clicked_pages == ["2"]
+    assert opened_urls == [driver.SELL_URL]
+
+
+def test_collect_all_merchants_waits_for_pagination_before_collecting(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    reads = {"value": 0}
+    current_page = {"value": 1}
+    clicked_pages: list[str] = []
+    window = FakeControl("Bybit", "Window")
+
+    class PageControl(ClickTrackingControl):
+        def __init__(self, title: str) -> None:
+            super().__init__(title, "ListItem", clicked_pages)
+
+        def invoke(self) -> None:
+            clicked_pages.append(self.window_text())
+            current_page["value"] = int(self.window_text())
+
+    page_one_without_pagination = [
+        FakeControl("Мерчант", "Text"),
+        FakeControl("WrongEarly", "Text"),
+    ]
+    pages = {
+        1: [
+            FakeControl("Мерчант", "Text"),
+            FakeControl("Pakpakly", "Text"),
+            FakeControl("Milano", "Text"),
+            PageControl("1"),
+            PageControl("2"),
+        ],
+        2: [
+            FakeControl("Мерчант", "Text"),
+            FakeControl("Teacher_pro", "Text"),
+            FakeControl("Garant", "Text"),
+            PageControl("1"),
+            PageControl("2"),
+        ],
+    }
+
+    def fake_document(_window):
+        if current_page["value"] == 1:
+            reads["value"] += 1
+            if reads["value"] == 1:
+                return FakeControl("Sell", "Document", descendants=page_one_without_pagination)
+        return FakeControl("Sell", "Document", descendants=pages[current_page["value"]])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.SELL_URL  # type: ignore[method-assign]
+    driver.open_url = lambda *_: None  # type: ignore[method-assign]
+    driver._find_main_document = fake_document  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    merchants = driver.collect_all_merchants("Bybit", 2)
+
+    assert merchants == ["Pakpakly", "Milano", "Teacher_pro", "Garant"]
+    assert clicked_pages == ["2"]
+    assert reads["value"] >= 2

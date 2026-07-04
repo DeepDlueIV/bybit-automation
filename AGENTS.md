@@ -1,6 +1,6 @@
 # Bybit Automation
 
-- Проект: автоматизация Bybit.
+- Проект: автоматизация Bybit P2P через существующий браузер (Windows, UIA/pywinauto).
 - Главные задачи:
   1. Заполнение формы объявления.
   2. Поиск мерчанта в списке продавцов.
@@ -22,3 +22,67 @@
 - После каждого шага должна быть понятная проверка результата.
 - Недостаточно, чтобы код просто запускался: поведение должно соответствовать инструкциям пользователя.
 - Перед завершением работы агент обязан сам проверить результат.
+
+# Run & Test
+
+- Запуск: `python -m bybit_automation` (из корня проекта)
+- Установка зависимостей: `pip install -e .`
+- Тесты: `pytest` или `pytest tests\test_файл.py -v`
+- Линтер/типчекер: `ruff check src\ tests\` (если установлен)
+
+# Project Structure
+
+```
+src/bybit_automation/
+├── app.py                          # Точка входа, DI-сборка
+├── controllers/
+│   └── app_controller.py           # Связь GUI с сервисами
+├── services/
+│   ├── browser_discovery_service.py    # Поиск окна браузера
+│   ├── bybit_existing_browser_service.py  # Работа с Bybit через браузер
+│   ├── merchant_cycle_service.py    # Цикл поиска мерчанта
+│   ├── settings_service.py          # Чтение/запись settings.json
+│   └── logging_service.py           # Логирование
+├── infrastructure/
+│   ├── paths.py                     # AppPaths (data, log, settings)
+│   ├── windows_browser_finder.py    # Поиск процесса/окна браузера
+│   └── existing_browser_window_driver.py  # pywinauto-драйвер
+├── gui/
+│   ├── main_window.py               # Главное окно
+│   └── sections/                    # Компоненты окна
+├── models/                          # Модели данных (state, cycle, discovery)
+├── browser/                         # Будущий движок автоматизации
+└── automation/                      # Будущий интерфейс автоматизации
+
+data/           # Runtime данные (создаются при первом запуске)
+├── settings.json        # Сохранённые настройки
+├── app.log              # Лог работы
+├── found_accounts.txt   # Найденные аккаунты
+└── merchants_temp.txt   # Временный список мерчантов
+
+tests/          # Тесты (pytest, PySide6, conftest.py)
+```
+
+# Architecture
+
+- **Стек**: Python 3.11+, PySide6, pywinauto, Windows-only
+- **Связь**: GUI → Controller → Service → Infrastructure (браузер через pywinauto UIA)
+- **Браузер**: Подключение к существующему окну (Incogniton) через COM/UIA, без Selenium/Playwright
+- **GUI**: PySide6, компоненты в `gui/sections/`
+
+# Code Style
+
+- Используй `from __future__ import annotations` в каждом файле.
+- Типизация обязательна: `-> None`, `| None`, Protocol, dataclass.
+- Импорты: стандартная библиотека → сторонние → внутренние, с пустой строкой между.
+- Нестандартные/сложные блоки комментировать на русском.
+- Логировать через `AppLogger` (логгер из `logging_service.py`).
+- Настройки читать/писать через `JsonSettingsService`.
+- Все пути — через `AppPaths` (data_dir, log_file, settings_file, found_accounts_file).
+
+# For opencode (superpowers)
+
+- Перед любой нетривиальной задачей загружать подходящий skill.
+- Логи создавать достаточно детальными, чтобы можно было проследить каждый шаг и понять решение.
+- При планировании указывать уровень сложности: light / medium / complex.
+- При общении на русском писать логи, объяснения и внутренние комментарии на русском, если это не вредит читаемости кода.

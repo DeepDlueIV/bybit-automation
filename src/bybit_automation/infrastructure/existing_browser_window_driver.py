@@ -27,6 +27,7 @@ class ExistingBrowserWindowDriver:
     SELL_URL = "https://www.bybit.com/ru-RU/p2p/sell/USDT/RUB"
     FAST_ACTION_DELAY_SECONDS = 0.05
     READY_POLL_SECONDS = 0.1
+    CLICK_LOG_SLOW_SECONDS = 0.35
 
     def __init__(self, logger: AppLogger | None = None) -> None:
         self._logger = logger
@@ -263,35 +264,44 @@ class ExistingBrowserWindowDriver:
         if not allow_forbidden_text and self._is_forbidden_click_text(text):
             raise RuntimeError(f"Запрещён лишний клик по элементу '{text}'.")
         try:
+            started_at = time.time()
             control.invoke()
-            self._log(f"click_best: invoke succeeded for '{text}'")
+            duration = time.time() - started_at
+            if duration >= self.CLICK_LOG_SLOW_SECONDS:
+                self._log(f"action: click '{text}' via invoke {duration:.3f}s")
             time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         try:
+            started_at = time.time()
             control.iface_invoke.Invoke()
-            self._log(f"click_best: iface_invoke succeeded for '{text}'")
+            duration = time.time() - started_at
+            self._log(f"action: click '{text}' via iface_invoke {duration:.3f}s")
             time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         try:
+            started_at = time.time()
             control.select()
-            self._log(f"click_best: select succeeded for '{text}'")
+            duration = time.time() - started_at
+            self._log(f"action: click '{text}' via select {duration:.3f}s")
             time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         try:
+            started_at = time.time()
             control.iface_selection_item.Select()
-            self._log(f"click_best: iface_selection_item succeeded for '{text}'")
+            duration = time.time() - started_at
+            self._log(f"action: click '{text}' via iface_selection_item {duration:.3f}s")
             time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             return
         except Exception:
             pass
         control.set_focus()
-        self._log(f"click_best: set_focus + send_keys fallback for '{text}'")
+        self._log(f"click_best fallback: set_focus + send_keys for '{text}'")
         time.sleep(self.FAST_ACTION_DELAY_SECONDS)
         send_keys("{ENTER}")
         time.sleep(self.FAST_ACTION_DELAY_SECONDS)
@@ -333,6 +343,41 @@ class ExistingBrowserWindowDriver:
                 time.sleep(self.READY_POLL_SECONDS)
 
         raise RuntimeError(f"Не найден элемент {name}")
+
+    def _collect_payment_method_targets(self, root, requested: set[str]) -> dict[str, object]:
+        """Собирает видимые цели popup оплаты за один проход по UIA-дереву."""
+        targets: dict[str, object] = {}
+        for control in self._interactive_items(root):
+            text = self._item_text(control)
+            if text not in requested or text in targets:
+                continue
+            control_type = self._item_type(control)
+            if control_type == "CheckBox":
+                targets[text] = control
+                continue
+            if control_type in {"Text", "ListItem", "Button"}:
+                targets[text] = control.parent() if control_type == "Text" else control
+        return targets
+
+    def _wait_for_payment_method_targets(
+        self,
+        window_title: str,
+        requested: set[str],
+        *,
+        timeout_seconds: float = 3.0,
+    ) -> dict[str, object]:
+        """Ждёт появления popup оплаты и возвращает найденные способы без повторных поисков."""
+        deadline = time.time() + timeout_seconds
+        last_targets: dict[str, object] = {}
+        while time.time() < deadline:
+            window = self._find_window(window_title)
+            targets = self._collect_payment_method_targets(window, requested)
+            if requested.issubset(targets):
+                return targets
+            last_targets = targets
+            time.sleep(self.READY_POLL_SECONDS)
+        missing = sorted(requested.difference(last_targets))
+        raise RuntimeError(f"Не дождался способов оплаты в popup: {', '.join(missing)}.")
 
     def focus(self, window_title: str) -> None:
         window = self._find_window(window_title)
@@ -412,16 +457,18 @@ class ExistingBrowserWindowDriver:
         if self._url_matches(current_url, target_url):
             return
 
+        skipped_forbidden: list[str] = []
         for control in self._tab_items(window):
             if self._is_forbidden_click_text(self._item_text(control)):
-                self._log(
-                    f"_activate_or_create_tab: пропускаю запрещённый TabItem '{self._item_text(control)}'."
-                )
+                skipped_forbidden.append(self._item_text(control))
                 continue
             self._click_best(control, allow_forbidden_text=True)
             time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             if self._url_matches(self._read_current_url(window), target_url):
                 return
+        if skipped_forbidden:
+            skipped_text = ", ".join(skipped_forbidden)
+            self._log(f"_activate_or_create_tab: пропускаю запрещённые TabItem: {skipped_text}.")
 
         try:
             self.open_url(window_title, target_url)
@@ -562,6 +609,44 @@ class ExistingBrowserWindowDriver:
         self._click_best(page_control)
         time.sleep(0.2)
 
+    def _wait_for_sell_listing_ready(
+        self,
+        window_title: str,
+        timeout_seconds: float = 15.0,
+        required_page: int | None = None,
+    ) -> tuple[object, list[str]]:
+        started_at = time.time()
+        deadline = started_at + timeout_seconds
+        latest_candidates: list[str] = []
+        while time.time() < deadline:
+            document = self._find_main_document(self._find_window(window_title))
+            latest_candidates = self._extract_merchant_candidates(document)
+            page_ready = required_page is None or self._document_has_page_control(document, required_page)
+            if latest_candidates and page_ready:
+                self._log(f"wait_ready: sell merchants ready {time.time() - started_at:.3f}s")
+                return document, latest_candidates
+            time.sleep(self.READY_POLL_SECONDS)
+        raise RuntimeError(
+            f"Не удалось дождаться готового списка мерчантов на Sell-странице. Последний список: {latest_candidates}."
+        )
+
+    def _document_has_page_control(self, document, page: int) -> bool:
+        target = str(page)
+        seen_header = False
+        clickable_page_types = ("Button", "ListItem", "DataItem", "Hyperlink")
+        for control in self._interactive_items(document):
+            text = self._item_text(control)
+            normalized = self._normalize_merchant_name(text)
+            if not seen_header:
+                if normalized in {"мерчант", "merchant"}:
+                    seen_header = True
+                continue
+            if self._is_listing_boundary(normalized):
+                break
+            if text == target and self._item_type(control) in clickable_page_types:
+                return True
+        return False
+
     def _find_page_control(self, window_title: str, page: int):
         target = str(page)
         document = self._find_main_document(self._find_window(window_title))
@@ -588,17 +673,41 @@ class ExistingBrowserWindowDriver:
 
         document = self._find_main_document(window)
         texts = [self._item_text(control) for control in self._interactive_items(document)]
+        self._log(f"read_ad: interactive texts ({len(texts)}): {texts[:20]}")
         side = next((text for text in texts if text.startswith("Покупка") or text.startswith("Продажа")), "")
         advertisement_id = next((text for text in texts if re.fullmatch(r"\d{10,}", text)), "")
         price_text = next((text for text in texts if re.fullmatch(r"\d+,\d{2}\s*RUB", text)), "")
+        created_at = next((text for text in texts if re.fullmatch(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}", text)), "")
+        if not created_at:
+            created_at = self._find_datetime_in_all_descendants(document)
+            if created_at:
+                self._log(f"read_ad: datetime found via descendants: '{created_at}'")
         if not advertisement_id or not price_text:
+            self._log(f"read_ad: returning None (id='{advertisement_id}', price='{price_text}')")
             return None
         side_value = "Покупка" if side.startswith("Покупка") else "Продажа" if side.startswith("Продажа") else ""
+        self._log(f"read_ad: snapshot id={advertisement_id} price={price_text} created_at={created_at}")
         return AdvertisementSnapshot(
             advertisement_id=advertisement_id,
             price=price_text.replace("RUB", "").strip(),
             side=side_value,
+            created_at=created_at,
         )
+
+    def _find_datetime_in_all_descendants(self, document) -> str:
+        datetime_re = re.compile(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
+        all_texts: list[str] = []
+        for control in document.descendants():
+            try:
+                text = control.window_text().strip()
+            except Exception:
+                continue
+            if text and len(text) < 40:
+                all_texts.append(text)
+            if datetime_re.fullmatch(text):
+                return text
+        self._log(f"read_ad: descendants texts ({len(all_texts)}): {all_texts[:30]}")
+        return ""
 
     def delete_current_advertisement(self, window_title: str) -> None:
         window = self._find_window(window_title)
@@ -734,6 +843,7 @@ class ExistingBrowserWindowDriver:
 
         on_progress(1, 0, "Возвращаюсь на первую страницу листинга")
         self._activate_first_search_page(window_title)
+        previous_candidates: list[str] | None = None
         for page in range(1, depth + 1):
             if stop_requested():
                 return MerchantSearchResult(found=False)
@@ -741,10 +851,10 @@ class ExistingBrowserWindowDriver:
                 on_progress(page, 0, f"Открываю страницу {page}")
                 page_control = self._find_page_control(window_title, page)
                 self._click_best(page_control)
-                time.sleep(self.READY_POLL_SECONDS)
+                candidates = self._wait_for_merchant_page_candidates(window_title, previous_candidates)
+            else:
+                _document, candidates = self._wait_for_sell_listing_ready(window_title)
             on_progress(page, 0, f"Читаю продавцов на странице {page}")
-            document = self._find_main_document(self._find_window(window_title))
-            candidates = self._extract_merchant_candidates(document)
             candidates_text = ", ".join(candidates) if candidates else "список пуст"
             on_progress(page, 0, f"Страница {page}, список мерчантов: {candidates_text}")
             for index, candidate in enumerate(candidates, start=1):
@@ -754,6 +864,7 @@ class ExistingBrowserWindowDriver:
                 if normalized_candidate == target_name:
                     on_progress(page, index, "Найден")
                     return MerchantSearchResult(found=True, page=page, position=index, matched_name=clean_name)
+            previous_candidates = candidates
             if page < depth:
                 on_progress(page, 0, f"Никнейм '{account_name}' не найден на странице {page}. Перехожу к следующей странице.")
             else:
@@ -768,18 +879,9 @@ class ExistingBrowserWindowDriver:
             raise RuntimeError(f"Активная вкладка не является Sell USDT/RUB. Определён адрес: {current_url}.")
 
         self.open_url(window_title, self.SELL_URL)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            try:
-                document = self._find_main_document(self._find_window(window_title))
-                if self._document_contains_any_text(document, ("мерчант", "merchant")):
-                    break
-            except RuntimeError:
-                pass
-            time.sleep(self.READY_POLL_SECONDS)
-
-        self._activate_first_search_page(window_title)
-        previous_candidates: list[str] | None = None
+        required_page = 2 if depth > 1 else None
+        _document, first_candidates = self._wait_for_sell_listing_ready(window_title, required_page=required_page)
+        previous_candidates: list[str] | None = first_candidates
 
         for page in range(1, depth + 1):
             page_started_at = time.time()
@@ -788,8 +890,7 @@ class ExistingBrowserWindowDriver:
                 self._click_best(page_control)
                 candidates = self._wait_for_merchant_page_candidates(window_title, previous_candidates)
             else:
-                document = self._find_main_document(self._find_window(window_title))
-                candidates = self._extract_merchant_candidates(document)
+                candidates = first_candidates
             elapsed = time.time() - page_started_at
             self._log(f"Сбор мерчантов: страница {page}, найдено {len(candidates)}, ожидание {elapsed:.3f}s.")
             all_merchants.extend(candidates)
@@ -803,12 +904,14 @@ class ExistingBrowserWindowDriver:
         previous_candidates: list[str] | None,
         timeout_seconds: float = 5.0,
     ) -> list[str]:
-        deadline = time.time() + timeout_seconds
+        started_at = time.time()
+        deadline = started_at + timeout_seconds
         latest_candidates: list[str] = []
         while time.time() < deadline:
             document = self._find_main_document(self._find_window(window_title))
             latest_candidates = self._extract_merchant_candidates(document)
             if latest_candidates and latest_candidates != previous_candidates:
+                self._log(f"verify: merchant list changed {time.time() - started_at:.3f}s")
                 return latest_candidates
             time.sleep(self.READY_POLL_SECONDS)
         return latest_candidates
@@ -942,7 +1045,10 @@ class ExistingBrowserWindowDriver:
         time.sleep(1.0)
 
     def _read_selected_trade_side(self, root) -> str | None:
-        for control in self._interactive_items(root):
+        return self._selected_trade_side_from_items(self._interactive_items(root))
+
+    def _selected_trade_side_from_items(self, items: list[object]) -> str | None:
+        for control in items:
             text = self._item_text(control)
             if text.startswith("Покупка USDT"):
                 return "Покупка"
@@ -950,32 +1056,53 @@ class ExistingBrowserWindowDriver:
                 return "Продажа"
         return None
 
+    def _trade_side_candidates_from_items(self, items: list[object], trade_side: str) -> list[object]:
+        candidates_by_type: dict[str, list[object]] = {
+            "Button": [],
+            "RadioButton": [],
+            "ListItem": [],
+            "Text": [],
+        }
+        for control in items:
+            control_type = self._item_type(control)
+            if control_type in candidates_by_type and self._item_text(control) == trade_side:
+                candidates_by_type[control_type].append(control)
+        candidates: list[object] = []
+        for control_type in ("Button", "RadioButton", "ListItem", "Text"):
+            candidates.extend(candidates_by_type[control_type])
+        return candidates
+
     def select_trade_side(self, window_title: str, trade_side: str) -> None:
-        document = self._find_main_document(self._find_window(window_title))
-        if self._read_selected_trade_side(document) == trade_side:
+        wait_started_at = time.time()
+        document = self._wait_until_document_contains(window_title, ("Покупка", "Продажа"), timeout_seconds=5)
+        self._log(f"wait_ready: trade side selector ready {time.time() - wait_started_at:.3f}s")
+        items = self._interactive_items(document)
+        selected_side = self._selected_trade_side_from_items(items)
+        if selected_side == trade_side:
             return
 
-        candidates: list[object] = []
-        preferred_types = ("Button", "RadioButton", "ListItem", "Text")
-        for control_type in preferred_types:
-            for control in self._interactive_items(document):
-                if self._item_text(control) == trade_side and self._item_type(control) == control_type:
-                    candidates.append(control)
-
+        candidates = self._trade_side_candidates_from_items(items, trade_side)
         if not candidates:
             raise RuntimeError(f"Не найден элемент '{trade_side}'.")
 
-        verification_available = self._read_selected_trade_side(document) is not None
-        last_selected_side = self._read_selected_trade_side(document)
+        verification_available = selected_side is not None
+        last_selected_side = selected_side
+        action_started_at = time.time()
+
+        if not verification_available:
+            candidate = candidates[0]
+            self._click_best(candidate.parent() if self._item_type(candidate) == "Text" else candidate)
+            return
+
         for candidate in candidates:
             self._click_best(candidate.parent() if self._item_type(candidate) == "Text" else candidate)
-            time.sleep(self.READY_POLL_SECONDS)
-            document = self._find_main_document(self._find_window(window_title))
-            last_selected_side = self._read_selected_trade_side(document)
-            if last_selected_side == trade_side:
-                return
-            if not verification_available:
-                return
+
+        document = self._find_main_document(self._find_window(window_title))
+        items = self._interactive_items(document)
+        last_selected_side = self._selected_trade_side_from_items(items)
+        if last_selected_side == trade_side:
+            self._log(f"verify: trade side '{trade_side}' selected {time.time() - action_started_at:.3f}s")
+            return
 
         detected = last_selected_side or "не определён"
         raise RuntimeError(f"Не удалось переключить тип объявления на '{trade_side}'. Текущий тип: {detected}.")
@@ -1086,11 +1213,16 @@ class ExistingBrowserWindowDriver:
         time.sleep(self.READY_POLL_SECONDS)
         self._log("Popup способов оплаты открыт, проверяю способы оплаты.")
 
+        payment_targets = self._wait_for_payment_method_targets(window_title, wanted)
         for name, enabled in requested.items():
             if not enabled:
                 continue
-            window = self._find_window(window_title)
-            self._select_visible_payment_method(window, name)
+            target = payment_targets[name]
+            if self._item_type(target) == "CheckBox":
+                self._set_checkbox_state(target, True)
+                continue
+            self._click_best(target)
+            time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
         window = self._find_window(window_title)
         confirm = self._find_contains(window, text_part="Подтверд", control_types=("Button",))

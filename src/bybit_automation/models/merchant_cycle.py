@@ -8,6 +8,7 @@ class AdvertisementSnapshot:
     advertisement_id: str
     price: str
     side: str
+    created_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -26,5 +27,6 @@ class MerchantCycleResult:
     message: str
     advertisement_id: str = ""
     price: str = ""
+    advertisement_created_at: str = ""
     page: int = 0
     position: int = 0
