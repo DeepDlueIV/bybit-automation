@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Protocol
 
+from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.models.app_state import AppState
 from bybit_automation.models.merchant_cycle import MerchantCycleResult
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
@@ -34,6 +35,7 @@ class AppController:
         merchant_cycle_service: MerchantCycleService | None = None,
         bybit_existing_browser_service: BybitExistingBrowserService | None = None,
         position_sound_notifier: PositionSoundNotifier | None = None,
+        app_paths: AppPaths | None = None,
     ) -> None:
         self._settings_service = settings_service
         self._logger = logger
@@ -41,6 +43,7 @@ class AppController:
         self._merchant_cycle_service = merchant_cycle_service
         self._bybit_existing_browser_service = bybit_existing_browser_service
         self._position_sound_notifier = position_sound_notifier
+        self._app_paths = app_paths or AppPaths.from_cwd()
         self._last_found_position = 0
         self._last_found_position_range = ""
 
@@ -148,7 +151,7 @@ class AppController:
 
         self._logger.info(f"Цикл: собираю мерчантов, глубина {depth} страниц.")
         merchants = self._bybit_existing_browser_service.collect_all_merchants(state.browser.window_title, depth)
-        temp_path = Path("data") / "merchants_temp.txt"
+        temp_path = self._app_paths.data_dir / "merchants_temp.txt"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_text("\n".join(merchants) + ("\n" if merchants else ""), encoding="utf-8")
         self._logger.info(f"Цикл: собрано мерчантов: {len(merchants)}. Сохранено: {temp_path}")
@@ -179,7 +182,7 @@ class AppController:
         return 0
 
     def _append_found_account_from_cycle(self, account_name: str, position: int, snapshot) -> None:
-        found_file = Path("data") / "found_accounts.txt"
+        found_file = self._app_paths.found_accounts_file
         found_file.parent.mkdir(parents=True, exist_ok=True)
         self._logger.info(f"Записываю аккаунт '{account_name}' позиция {position} в {found_file}")
         with found_file.open("a", encoding="utf-8") as handle:
@@ -209,7 +212,7 @@ class AppController:
             self._logger.info("Не указано имя аккаунта для поиска.")
             return
 
-        temp_path = Path("data") / "merchants_temp.txt"
+        temp_path = self._app_paths.data_dir / "merchants_temp.txt"
         if not temp_path.exists():
             self._logger.info("Файл merchants_temp.txt не найден. Сначала соберите мерчантов.")
             return
@@ -233,7 +236,7 @@ class AppController:
             self._logger.info(f"Не удалось прочитать объявление: {error}")
             snapshot = None
 
-        found_file = Path("data") / "found_accounts.txt"
+        found_file = self._app_paths.found_accounts_file
         with open(found_file, "a", encoding="utf-8") as f:
             f.write(f"{account_name}\n")
             f.write(f"Позиция {found_idx}\n")

@@ -14,7 +14,7 @@ class AppPaths:
 
     @classmethod
     def from_cwd(cls) -> "AppPaths":
-        root_dir = Path.cwd()
+        root_dir = Path(__file__).resolve().parents[3]
         data_dir = root_dir / "data"
         settings_file = data_dir / "settings.json"
         found_accounts_file = data_dir / "found_accounts.txt"

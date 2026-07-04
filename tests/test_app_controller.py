@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bybit_automation.controllers.app_controller import AppController, position_range_label
+from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
 from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
@@ -164,6 +165,7 @@ def test_start_and_stop_merchant_search_use_service(tmp_path: Path) -> None:
 
 def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    test_paths = AppPaths(root_dir=tmp_path, data_dir=tmp_path / "data", settings_file=tmp_path / "settings.json", found_accounts_file=tmp_path / "data" / "found_accounts.txt", log_file=tmp_path / "data" / "app.log")
 
     class FakeNotifier:
         def __init__(self) -> None:
@@ -195,6 +197,7 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
         AppLogger(),
         bybit_existing_browser_service=service,
         position_sound_notifier=notifier,
+        app_paths=test_paths,
     )
     state = controller.default_state()
     state.browser.window_title = "Bybit"
@@ -269,6 +272,7 @@ def test_find_my_account_records_advertisement_created_at_and_alerts_top_positio
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    test_paths = AppPaths(root_dir=tmp_path, data_dir=tmp_path / "data", settings_file=tmp_path / "settings.json", found_accounts_file=tmp_path / "data" / "found_accounts.txt", log_file=tmp_path / "data" / "app.log")
 
     class FakeNotifier:
         def __init__(self) -> None:
@@ -290,6 +294,7 @@ def test_find_my_account_records_advertisement_created_at_and_alerts_top_positio
         AppLogger(),
         bybit_existing_browser_service=FakeExistingBrowserService(),
         position_sound_notifier=notifier,
+        app_paths=test_paths,
     )
     state = controller.default_state()
     state.browser.window_title = "Bybit"
@@ -307,6 +312,7 @@ def test_find_my_account_records_advertisement_created_at_and_alerts_top_positio
 
 def test_run_listing_cycle_writes_account_when_read_snapshot_raises_oserror(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    test_paths = AppPaths(root_dir=tmp_path, data_dir=tmp_path / "data", settings_file=tmp_path / "settings.json", found_accounts_file=tmp_path / "data" / "found_accounts.txt", log_file=tmp_path / "data" / "app.log")
 
     class FakeExistingBrowserService:
         def create_advertisement(self, state):
@@ -322,6 +328,7 @@ def test_run_listing_cycle_writes_account_when_read_snapshot_raises_oserror(tmp_
         JsonSettingsService(tmp_path / "settings.json"),
         AppLogger(),
         bybit_existing_browser_service=FakeExistingBrowserService(),
+        app_paths=test_paths,
     )
     state = controller.default_state()
     state.browser.window_title = "Bybit"

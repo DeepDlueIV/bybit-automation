@@ -49,6 +49,7 @@ def build_main_window() -> MainWindow:
         merchant_cycle_service=merchant_cycle_service,
         bybit_existing_browser_service=bybit_existing_browser_service,
         position_sound_notifier=position_sound_notifier,
+        app_paths=app_paths,
     )
     return MainWindow(controller=controller, logger=logger)
 
