@@ -775,6 +775,27 @@ def test_read_current_advertisement_extracts_snapshot_from_ads_listing() -> None
     assert result == AdvertisementSnapshot("2072529315394842624", "80,00", "Покупка", "2026-07-04 22:19:47")
 
 
+def test_read_current_advertisement_extracts_datetime_from_composite_string() -> None:
+    driver = ExistingBrowserWindowDriver()
+    document = FakeControl(
+        "Мои объявления",
+        "Document",
+        descendants=[
+            FakeControl("2072529315394842624", "Text"),
+            FakeControl("80,00 RUB", "Text"),
+            FakeControl("Покупка USDT 2026-07-05 00:58:01", "DataItem"),
+        ],
+    )
+    window = FakeControl("Bybit", "Window", [document])
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.ADS_URL  # type: ignore[method-assign]
+
+    result = driver.read_current_advertisement("Bybit")
+
+    assert result == AdvertisementSnapshot("2072529315394842624", "80,00", "Покупка", "2026-07-05 00:58:01")
+
+
 def test_read_current_advertisement_finds_datetime_in_custom_element() -> None:
     driver = ExistingBrowserWindowDriver()
     document = FakeControl(

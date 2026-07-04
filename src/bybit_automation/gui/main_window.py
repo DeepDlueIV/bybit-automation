@@ -20,8 +20,8 @@ from bybit_automation.gui.sections.browser_section import BrowserSection
 from bybit_automation.gui.sections.log_section import LogSection
 from bybit_automation.gui.sections.search_section import SearchSection
 from bybit_automation.models.app_state import AppState
-from bybit_automation.models.merchant_cycle import MerchantCycleResult
 from bybit_automation.services.logging_service import AppLogger
+from bybit_automation.services.sound_notifier import ErrorSoundNotifier
 
 
 def _describe_exception(error: Exception) -> str:
@@ -104,10 +104,11 @@ class ListingCycleWorker(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, controller: AppController, logger: AppLogger) -> None:
+    def __init__(self, controller: AppController, logger: AppLogger, error_sound_notifier: ErrorSoundNotifier | None = None) -> None:
         super().__init__()
         self._controller = controller
         self._logger = logger
+        self._error_sound_notifier = error_sound_notifier or ErrorSoundNotifier()
         self._search_thread: QThread | None = None
         self._search_worker: MerchantSearchWorker | None = None
         self._cycle_thread: QThread | None = None
@@ -338,6 +339,7 @@ class MainWindow(QMainWindow):
         self.search_section.search_status_label.setText(message)
         self._logger.info(message)
         self.status_bar.showMessage("Цикл завершился с ошибкой")
+        self._error_sound_notifier.play()
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Critical)
         msg.setWindowTitle("Ошибка цикла")

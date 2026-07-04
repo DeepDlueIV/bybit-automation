@@ -677,7 +677,15 @@ class ExistingBrowserWindowDriver:
         side = next((text for text in texts if text.startswith("Покупка") or text.startswith("Продажа")), "")
         advertisement_id = next((text for text in texts if re.fullmatch(r"\d{10,}", text)), "")
         price_text = next((text for text in texts if re.fullmatch(r"\d+,\d{2}\s*RUB", text)), "")
-        created_at = next((text for text in texts if re.fullmatch(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}", text)), "")
+        datetime_re = re.compile(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
+        created_at = next(
+            (
+                match.group()
+                for text in texts
+                if (match := datetime_re.search(text))
+            ),
+            "",
+        )
         if not created_at:
             created_at = self._find_datetime_in_all_descendants(document)
             if created_at:
@@ -704,8 +712,9 @@ class ExistingBrowserWindowDriver:
                 continue
             if text and len(text) < 40:
                 all_texts.append(text)
-            if datetime_re.fullmatch(text):
-                return text
+            match = datetime_re.search(text)
+            if match:
+                return match.group()
         self._log(f"read_ad: descendants texts ({len(all_texts)}): {all_texts[:30]}")
         return ""
 

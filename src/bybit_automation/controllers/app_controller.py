@@ -21,9 +21,7 @@ class PositionSoundNotifier(Protocol):
 def position_range_label(position: int) -> str:
     if position < 1:
         return ""
-    start = ((position - 1) // 10) * 10 + 1
-    end = start + 9
-    return f"{start}-{end}"
+    return str(position)
 
 
 class AppController:

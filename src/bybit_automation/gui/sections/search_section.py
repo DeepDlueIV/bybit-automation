@@ -18,8 +18,7 @@ from bybit_automation.models.app_state import SearchSettings
 def _position_range_label(position: int) -> str:
     if position < 1:
         return ""
-    start = ((position - 1) // 10) * 10 + 1
-    return f"{start}-{start + 9}"
+    return str(position)
 
 
 class SearchSection(QWidget):

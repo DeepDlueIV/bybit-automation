@@ -67,7 +67,7 @@ def test_search_section_updates_last_found_position_range(qtbot) -> None:
 
     section.set_last_found_position(17)
 
-    assert section.last_found_position_label.text() == "Последняя найдена позиция: 11-20"
+    assert section.last_found_position_label.text() == "Последняя найдена позиция: 17"
 
 
 def test_main_window_places_cycle_block_outside_search_group(qtbot, tmp_path: Path) -> None:
@@ -429,5 +429,5 @@ def test_main_window_updates_search_progress_and_result_labels(qtbot, tmp_path: 
     assert window.search_section.current_page_label.text() == "2"
     assert window.search_section.current_position_label.text() == "5/10"
     assert window.search_section.search_status_label.text() == "Аккаунт найден"
-    assert window.search_section.last_found_position_label.text() == "Последняя найдена позиция: 1-10"
+    assert window.search_section.last_found_position_label.text() == "Последняя найдена позиция: 5"
     assert shown_messages == [("Поиск завершён", "Аккаунт найден")]

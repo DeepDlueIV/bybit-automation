@@ -41,3 +41,35 @@ class TopPositionSoundNotifier:
         except ImportError:
             return
         winsound.Beep(frequency, duration_ms)
+
+
+class ErrorSoundNotifier:
+    """Проигрывает низкий тревожный сигнал при ошибке цикла."""
+
+    sequence: tuple[tuple[int, int], ...] = (
+        (400, 200),
+        (250, 200),
+        (150, 400),
+    )
+
+    def __init__(self, beep: BeepFunc | None = None, *, async_play: bool = True) -> None:
+        self._beep = beep or self._default_beep
+        self._async_play = async_play
+
+    def play(self) -> None:
+        if self._async_play:
+            Thread(target=self._play_sequence, daemon=True).start()
+            return
+        self._play_sequence()
+
+    def _play_sequence(self) -> None:
+        for frequency, duration_ms in self.sequence:
+            self._beep(frequency, duration_ms)
+
+    @staticmethod
+    def _default_beep(frequency: int, duration_ms: int) -> None:
+        try:
+            import winsound
+        except ImportError:
+            return
+        winsound.Beep(frequency, duration_ms)

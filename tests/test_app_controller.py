@@ -222,7 +222,7 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
     assert "ad-55" in found_text
     assert "Цена 80,51" in found_text
     assert "Дата объявления 2026-07-04 22:19:47" in found_text
-    assert controller.last_found_position_range == "1-10"
+    assert controller.last_found_position_range == "2"
     assert notifier.positions == [2]
 
 
@@ -261,10 +261,10 @@ def test_run_listing_cycle_iteration_returns_false_when_account_not_found(tmp_pa
 
 
 def test_position_range_label_groups_absolute_positions() -> None:
-    assert position_range_label(1) == "1-10"
-    assert position_range_label(10) == "1-10"
-    assert position_range_label(11) == "11-20"
-    assert position_range_label(20) == "11-20"
+    assert position_range_label(1) == "1"
+    assert position_range_label(10) == "10"
+    assert position_range_label(11) == "11"
+    assert position_range_label(20) == "20"
     assert position_range_label(0) == ""
 
 
@@ -306,7 +306,7 @@ def test_find_my_account_records_advertisement_created_at_and_alerts_top_positio
     assert "ID ad-77" in found_text
     assert "Цена 81,02" in found_text
     assert "Дата объявления 2026-07-04 22:19:47" in found_text
-    assert controller.last_found_position_range == "1-10"
+    assert controller.last_found_position_range == "2"
     assert notifier.positions == [2]
 
 
