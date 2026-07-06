@@ -275,6 +275,48 @@ def test_run_listing_cycle_iteration_uses_selected_automation_mode_service(tmp_p
     ]
 
 
+def test_open_selected_browser_profile_uses_selected_automation_mode_service(tmp_path: Path) -> None:
+    class FakePlaywrightService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def open_profile(self, window_title: str) -> None:
+            self.calls.append(("open_profile", window_title))
+
+    playwright_service = FakePlaywrightService()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_browser_services={AutomationMode.PLAYWRIGHT_PROFILE: playwright_service},
+    )
+    state = controller.default_state()
+    state.browser.automation_mode = AutomationMode.PLAYWRIGHT_PROFILE
+    state.browser.window_title = "Playwright profile"
+
+    result = controller.open_selected_browser_profile(state)
+
+    assert result is True
+    assert playwright_service.calls == [("open_profile", "Playwright profile")]
+
+
+def test_open_selected_browser_profile_does_not_call_uia_fallback(tmp_path: Path) -> None:
+    class ExistingBrowserServiceThatWouldCrash:
+        def open_profile(self, window_title: str) -> None:
+            raise AssertionError("UIA service must not be used for Playwright profile opener")
+
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_existing_browser_service=ExistingBrowserServiceThatWouldCrash(),
+    )
+    state = controller.default_state()
+    state.browser.automation_mode = AutomationMode.INCOGNITON_UIA
+
+    result = controller.open_selected_browser_profile(state)
+
+    assert result is False
+
+
 def test_run_listing_cycle_iteration_returns_false_when_account_not_found(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 

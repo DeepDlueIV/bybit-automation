@@ -88,6 +88,13 @@ def test_browser_section_exposes_automation_modes(qtbot) -> None:
     assert section.get_state().automation_mode == AutomationMode.PLAYWRIGHT_PROFILE
 
 
+def test_browser_section_has_open_playwright_profile_button(qtbot) -> None:
+    section = BrowserSection()
+    qtbot.addWidget(section)
+
+    assert section.open_playwright_profile_button.text() == "Открыть Playwright-профиль"
+
+
 def test_main_window_places_cycle_block_outside_search_group(qtbot, tmp_path: Path) -> None:
     controller = AppController(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
     window = MainWindow(controller=controller, logger=controller._logger)

@@ -29,6 +29,7 @@ class BrowserSection(QWidget):
         self.tabs_summary_label = QLabel("")
         self.tabs_summary_label.setWordWrap(True)
         self.check_browser_button = QPushButton("Проверить браузер")
+        self.open_playwright_profile_button = QPushButton("Открыть Playwright-профиль")
 
         details = QWidget()
         form = QFormLayout(details)
@@ -40,6 +41,7 @@ class BrowserSection(QWidget):
         form.addRow("Окно браузера", self.window_title_label)
         form.addRow("Вкладки", self.tabs_summary_label)
         form.addRow(self.check_browser_button)
+        form.addRow(self.open_playwright_profile_button)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)

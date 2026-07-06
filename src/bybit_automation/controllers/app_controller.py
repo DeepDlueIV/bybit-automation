@@ -81,6 +81,17 @@ class AppController:
     def placeholder_action(self, action_name: str) -> None:
         self._logger.info(f"{action_name} пока не реализовано.")
 
+    def open_selected_browser_profile(self, state: AppState) -> bool:
+        if state.browser.automation_mode != AutomationMode.PLAYWRIGHT_PROFILE:
+            self._logger.info("Открытие Playwright-профиля доступно только в режиме Playwright profile.")
+            return False
+        browser_service = self._browser_service_for(state)
+        if browser_service is None or not hasattr(browser_service, "open_profile"):
+            self._logger.info("Выбранный режим не поддерживает отдельное открытие профиля.")
+            return False
+        browser_service.open_profile(state.browser.window_title)
+        return True
+
     def _browser_service_for(self, state: AppState) -> Any | None:
         return self._bybit_browser_services.get(state.browser.automation_mode) or self._bybit_existing_browser_service
 

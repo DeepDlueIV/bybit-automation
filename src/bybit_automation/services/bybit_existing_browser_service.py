@@ -41,6 +41,8 @@ class BrowserDriver(Protocol):
     def enter_security_password(self, window_title: str, password: str) -> None: ...
     def sleep(self, seconds: float) -> None: ...
 
+    def open_profile(self, window_title: str) -> None: ...
+
 
 @dataclass
 class BybitExistingBrowserService:
@@ -65,6 +67,10 @@ class BybitExistingBrowserService:
         self.driver.refresh_page(window_title)
         self.logger.info("Читаю актуальную цену из рабочей Sell-вкладки.")
         return self.driver.read_current_sell_price(window_title)
+
+    def open_profile(self, window_title: str) -> None:
+        self.logger.info("Открываю Playwright-профиль без запуска цикла.")
+        self.driver.open_profile(window_title)
 
     def _prepare_fresh_price_for_new_advertisement(self, state: AppState) -> None:
         window_title = state.browser.window_title.strip()

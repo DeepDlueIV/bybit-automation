@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+import socket
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -35,6 +37,7 @@ class PlaywrightBrowserDriver:
         self._headless = headless
         self._playwright: Any | None = None
         self._browser: Any | None = None
+        self._chrome_process: subprocess.Popen | None = None
         self._context: Any | None = None
         self._sell_page: Any | None = None
         self._ads_page: Any | None = None
@@ -67,14 +70,107 @@ class PlaywrightBrowserDriver:
             return self._context
 
         self._user_data_dir.mkdir(parents=True, exist_ok=True)
+        if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
+            chrome_executable = self._find_chrome_executable()
+            if chrome_executable is not None:
+                port = self._find_free_port()
+                command = self._build_manual_chrome_command(
+                    chrome_executable=chrome_executable,
+                    remote_debugging_port=port,
+                )
+                self._log(f"запускаю системный Chrome с профилем: {self._user_data_dir}")
+                self._chrome_process = subprocess.Popen(command)
+                endpoint = f"http://127.0.0.1:{port}"
+                self._browser = self._connect_to_manual_chrome(endpoint)
+                self._context = self._browser.contexts[0] if self._browser.contexts else self._browser.new_context()
+                return self._context
+
         self._log(f"запускаю persistent profile: {self._user_data_dir}")
-        self._context = self._playwright.chromium.launch_persistent_context(
-            str(self._user_data_dir),
-            headless=self._headless,
-            viewport={"width": 1440, "height": 1000},
-            locale="ru-RU",
-        )
+        try:
+            self._context = self._playwright.chromium.launch_persistent_context(
+                str(self._user_data_dir),
+                **self._launch_persistent_context_kwargs(),
+            )
+        except Exception as error:
+            if self._mode != AutomationMode.PLAYWRIGHT_PROFILE:
+                raise
+            self._log(f"не удалось запустить системный Chrome, использую Chromium Playwright: {error}")
+            fallback_kwargs = self._launch_persistent_context_kwargs(prefer_chrome=False)
+            self._context = self._playwright.chromium.launch_persistent_context(
+                str(self._user_data_dir),
+                **fallback_kwargs,
+            )
         return self._context
+
+    def _find_chrome_executable(self) -> Path | None:
+        candidates = (
+            Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        )
+        return next((path for path in candidates if path.exists()), None)
+
+    def _find_free_port(self) -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    def _build_manual_chrome_command(self, *, chrome_executable: Path, remote_debugging_port: int) -> list[str]:
+        return [
+            str(chrome_executable),
+            f"--remote-debugging-port={remote_debugging_port}",
+            f"--user-data-dir={self._user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "about:blank",
+        ]
+
+    def _connect_to_manual_chrome(self, endpoint: str) -> Any:
+        last_error: Exception | None = None
+        for _ in range(30):
+            try:
+                return self._playwright.chromium.connect_over_cdp(endpoint)
+            except Exception as error:
+                last_error = error
+                time.sleep(0.2)
+        raise RuntimeError(f"Не удалось подключиться к запущенному Chrome по {endpoint}: {last_error}")
+
+    def _launch_persistent_context_kwargs(self, *, prefer_chrome: bool = True) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "headless": self._headless,
+            "viewport": {"width": 1440, "height": 1000},
+            "locale": "ru-RU",
+        }
+        if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
+            if prefer_chrome:
+                kwargs["channel"] = "chrome"
+            kwargs["ignore_default_args"] = [
+                "--disable-background-networking",
+                "--disable-component-extensions-with-background-pages",
+                "--disable-component-update",
+                "--disable-extensions",
+            ]
+        return kwargs
+
+    def open_profile(self, window_title: str) -> None:
+        if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
+            self._user_data_dir.mkdir(parents=True, exist_ok=True)
+            chrome_executable = self._find_chrome_executable()
+            if chrome_executable is None:
+                raise RuntimeError("Не найден установленный Google Chrome для открытия Playwright-профиля.")
+            port = self._find_free_port()
+            command = self._build_manual_chrome_command(
+                chrome_executable=chrome_executable,
+                remote_debugging_port=port,
+            )
+            self._log(f"открываю системный Chrome без CDP-подключения: {command}")
+            subprocess.Popen(command)
+            return
+        context = self._ensure_context()
+        if context.pages:
+            context.pages[0].bring_to_front()
+            return
+        self._sell_page = self._page_for_url(self.SELL_URL, role="Sell")
 
     def _page_for_url(self, url: str, *, role: str) -> Any:
         context = self._ensure_context()
@@ -390,4 +486,5 @@ class PlaywrightBrowserDriver:
             self._browser.close()
         if self._playwright is not None:
             self._playwright.stop()
-
+        if self._chrome_process is not None and self._chrome_process.poll() is None:
+            self._chrome_process.terminate()

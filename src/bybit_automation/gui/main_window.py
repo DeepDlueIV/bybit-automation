@@ -176,6 +176,7 @@ class MainWindow(QMainWindow):
         self.advertisement_section.fill_form_button.clicked.connect(self.on_fill_form)
         self.advertisement_section.get_current_price_button.clicked.connect(self.on_fetch_current_price)
         self.browser_section.check_browser_button.clicked.connect(self.on_discover_browser)
+        self.browser_section.open_playwright_profile_button.clicked.connect(self.on_open_playwright_profile)
         self.search_section.collect_merchants_button.clicked.connect(self.on_collect_merchants)
         self.search_section.find_account_button.clicked.connect(self.on_start_search)
         self.search_section.start_search_button.clicked.connect(self.on_start_cycle)
@@ -240,6 +241,18 @@ class MainWindow(QMainWindow):
         state = self._controller.discover_browser(self.browser_section.browser_combo.currentText())
         self.apply_state(state)
         self.status_bar.showMessage("Браузер проверен")
+
+    def on_open_playwright_profile(self) -> None:
+        try:
+            opened = self._controller.open_selected_browser_profile(self.collect_state())
+        except (RuntimeError, KeyError) as error:
+            self._logger.info(_describe_exception(error))
+            self.status_bar.showMessage("Не удалось открыть Playwright-профиль")
+            return
+        if opened:
+            self.status_bar.showMessage("Playwright-профиль открыт")
+        else:
+            self.status_bar.showMessage("Выбранный режим не поддерживает открытие профиля")
 
     def on_fill_form(self) -> None:
         try:
