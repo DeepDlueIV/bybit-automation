@@ -5,12 +5,14 @@ from threading import Thread
 
 
 BeepFunc = Callable[[int, int], None]
+SystemSoundFunc = Callable[[], None]
+PlaybackCallback = Callable[[str], None]
 
 
-class TopPositionSoundNotifier:
-    """Проигрывает короткий нестандартный сигнал, когда аккаунт найден в топ-10."""
+class AccountFoundSoundNotifier:
+    """Проигрывает уведомление о найденном и успешно записанном аккаунте."""
 
-    sequence: tuple[tuple[int, int], ...] = (
+    fallback_sequence: tuple[tuple[int, int], ...] = (
         (880, 180),
         (1175, 180),
         (1568, 260),
@@ -18,21 +20,46 @@ class TopPositionSoundNotifier:
         (1568, 320),
     )
 
-    def __init__(self, beep: BeepFunc | None = None, *, async_play: bool = True) -> None:
+    def __init__(
+        self,
+        system_sound: SystemSoundFunc | None = None,
+        beep: BeepFunc | None = None,
+        *,
+        async_play: bool = True,
+        on_playback: PlaybackCallback | None = None,
+    ) -> None:
+        self._system_sound = system_sound or self._default_system_sound
         self._beep = beep or self._default_beep
         self._async_play = async_play
+        self._on_playback = on_playback
 
-    def notify_if_top_position(self, position: int) -> None:
-        if not 1 <= position <= 10:
-            return
+    def notify(self) -> None:
         if self._async_play:
-            Thread(target=self._play_sequence, daemon=True).start()
+            Thread(target=self._play_notification, daemon=True).start()
             return
-        self._play_sequence()
+        self._play_notification()
 
-    def _play_sequence(self) -> None:
-        for frequency, duration_ms in self.sequence:
-            self._beep(frequency, duration_ms)
+    def _play_notification(self) -> None:
+        try:
+            self._system_sound()
+        except Exception:
+            self._emit_playback("fallback")
+            for frequency, duration_ms in self.fallback_sequence:
+                self._beep(frequency, duration_ms)
+            return
+        self._emit_playback("system")
+
+    def _emit_playback(self, mode: str) -> None:
+        if self._on_playback is not None:
+            self._on_playback(mode)
+
+    @staticmethod
+    def _default_system_sound() -> None:
+        try:
+            import winsound
+        except ImportError as error:
+            raise RuntimeError("winsound недоступен") from error
+        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
 
     @staticmethod
     def _default_beep(frequency: int, duration_ms: int) -> None:

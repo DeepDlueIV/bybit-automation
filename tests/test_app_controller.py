@@ -169,10 +169,10 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
 
     class FakeNotifier:
         def __init__(self) -> None:
-            self.positions: list[int] = []
+            self.calls = 0
 
-        def notify_if_top_position(self, position: int) -> None:
-            self.positions.append(position)
+        def notify(self) -> None:
+            self.calls += 1
 
     class FakeExistingBrowserService:
         def __init__(self) -> None:
@@ -223,7 +223,7 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
     assert "Цена 80,51" in found_text
     assert "Дата объявления 2026-07-04 22:19:47" in found_text
     assert controller.last_found_position_range == "2"
-    assert notifier.positions == [2]
+    assert notifier.calls == 1
 
 
 def test_run_listing_cycle_iteration_returns_false_when_account_not_found(tmp_path: Path, monkeypatch) -> None:
@@ -268,7 +268,7 @@ def test_position_range_label_groups_absolute_positions() -> None:
     assert position_range_label(0) == ""
 
 
-def test_find_my_account_records_advertisement_created_at_and_alerts_top_position(
+def test_find_my_account_records_advertisement_created_at_and_notifies_after_successful_write(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -276,10 +276,10 @@ def test_find_my_account_records_advertisement_created_at_and_alerts_top_positio
 
     class FakeNotifier:
         def __init__(self) -> None:
-            self.positions: list[int] = []
+            self.calls = 0
 
-        def notify_if_top_position(self, position: int) -> None:
-            self.positions.append(position)
+        def notify(self) -> None:
+            self.calls += 1
 
     class FakeExistingBrowserService:
         def read_current_advertisement(self, window_title: str):
@@ -307,7 +307,92 @@ def test_find_my_account_records_advertisement_created_at_and_alerts_top_positio
     assert "Цена 81,02" in found_text
     assert "Дата объявления 2026-07-04 22:19:47" in found_text
     assert controller.last_found_position_range == "2"
-    assert notifier.positions == [2]
+    assert notifier.calls == 1
+
+
+def test_find_my_account_notifies_for_position_outside_top_10_after_successful_write(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    test_paths = AppPaths(root_dir=tmp_path, data_dir=tmp_path / "data", settings_file=tmp_path / "settings.json", found_accounts_file=tmp_path / "data" / "found_accounts.txt", log_file=tmp_path / "data" / "app.log")
+
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def notify(self) -> None:
+            self.calls += 1
+
+    class FakeExistingBrowserService:
+        def read_current_advertisement(self, window_title: str):
+            return AdvertisementSnapshot("ad-88", "81,02", "РџРѕРєСѓРїРєР°", "2026-07-04 22:19:47")
+
+    temp_path = tmp_path / "data" / "merchants_temp.txt"
+    temp_path.parent.mkdir(parents=True)
+    temp_path.write_text("\n".join([f"Merchant{i}" for i in range(1, 12)]) + "\nMannequin\n", encoding="utf-8")
+    notifier = FakeNotifier()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_existing_browser_service=FakeExistingBrowserService(),
+        position_sound_notifier=notifier,
+        app_paths=test_paths,
+    )
+    state = controller.default_state()
+    state.browser.window_title = "Bybit"
+    state.search.account_name = "Mannequin"
+
+    controller.find_my_account(state)
+
+    assert controller.last_found_position_range == "12"
+    assert notifier.calls == 1
+
+
+def test_find_my_account_does_not_notify_when_found_file_write_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    test_paths = AppPaths(root_dir=tmp_path, data_dir=tmp_path / "data", settings_file=tmp_path / "settings.json", found_accounts_file=tmp_path / "data" / "found_accounts.txt", log_file=tmp_path / "data" / "app.log")
+
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def notify(self) -> None:
+            self.calls += 1
+
+    class FakeExistingBrowserService:
+        def read_current_advertisement(self, window_title: str):
+            return AdvertisementSnapshot("ad-77", "81,02", "РџРѕРєСѓРїРєР°", "2026-07-04 22:19:47")
+
+    temp_path = tmp_path / "data" / "merchants_temp.txt"
+    temp_path.parent.mkdir(parents=True)
+    temp_path.write_text("Alpha\nMannequin\nOmega\n", encoding="utf-8")
+    notifier = FakeNotifier()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_existing_browser_service=FakeExistingBrowserService(),
+        position_sound_notifier=notifier,
+        app_paths=test_paths,
+    )
+    state = controller.default_state()
+    state.browser.window_title = "Bybit"
+    state.search.account_name = "Mannequin"
+
+    def fail_open(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("builtins.open", fail_open)
+
+    try:
+        controller.find_my_account(state)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected OSError")
+
+    assert notifier.calls == 0
 
 
 def test_run_listing_cycle_writes_account_when_read_snapshot_raises_oserror(tmp_path: Path, monkeypatch) -> None:

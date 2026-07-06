@@ -14,7 +14,7 @@ from bybit_automation.services.settings_service import JsonSettingsService
 
 
 class PositionSoundNotifier(Protocol):
-    def notify_if_top_position(self, position: int) -> None:
+    def notify(self) -> None:
         ...
 
 
@@ -169,6 +169,7 @@ class AppController:
             snapshot = None
         self._append_found_account_from_cycle(account_name, found_position, snapshot)
         self._record_found_position(found_position)
+        self._notify_found_account_recorded()
         self._logger.info(f"Цикл: аккаунт '{account_name}' найден на позиции {found_position}. Результат записан.")
         return True
 
@@ -197,8 +198,12 @@ class AppController:
     def _record_found_position(self, position: int) -> None:
         self._last_found_position = position
         self._last_found_position_range = position_range_label(position)
-        if self._position_sound_notifier is not None and 1 <= position <= 10:
-            self._position_sound_notifier.notify_if_top_position(position)
+
+    def _notify_found_account_recorded(self) -> None:
+        if self._position_sound_notifier is None:
+            return
+        self._position_sound_notifier.notify()
+        self._logger.info("Звуковое уведомление о найденном аккаунте отправлено.")
 
     def find_my_account(self, state: AppState) -> None:
         if self._bybit_existing_browser_service is None:
@@ -246,6 +251,7 @@ class AppController:
             f.write("\n")
 
         self._record_found_position(found_idx)
+        self._notify_found_account_recorded()
         self._logger.info(f"Аккаунт '{account_name}' найден на позиции {found_idx}. Данные добавлены в found_accounts.txt.")
 
     def fetch_current_price(self, state: AppState) -> AppState:

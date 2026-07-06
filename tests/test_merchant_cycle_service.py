@@ -76,10 +76,10 @@ def test_cycle_returns_failure_after_all_attempts() -> None:
 def test_live_cycle_recreates_ad_with_fresh_price_and_appends_found_record(tmp_path: Path) -> None:
     class FakeNotifier:
         def __init__(self) -> None:
-            self.positions: list[int] = []
+            self.calls = 0
 
-        def notify_if_top_position(self, position: int) -> None:
-            self.positions.append(position)
+        def notify(self) -> None:
+            self.calls += 1
 
     class FakeGateway:
         def __init__(self) -> None:
@@ -144,7 +144,54 @@ def test_live_cycle_recreates_ad_with_fresh_price_and_appends_found_record(tmp_p
     assert "id new-1" in found_file.read_text(encoding="utf-8")
     assert "цена 81,31" in found_file.read_text(encoding="utf-8")
     assert "дата объявления 2026-07-04 22:19:47" in found_file.read_text(encoding="utf-8")
-    assert notifier.positions == []
+    assert notifier.calls == 1
+
+
+def test_live_cycle_does_not_notify_when_found_record_write_fails(tmp_path: Path) -> None:
+    class FakeNotifier:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def notify(self) -> None:
+            self.calls += 1
+
+    class FakeGateway:
+        def read_current_advertisement(self, window_title: str):
+            return AdvertisementSnapshot("new-1", "81,31", "РџРѕРєСѓРїРєР°", "2026-07-04 22:19:47")
+
+        def search_merchant(self, window_title: str, account_name: str, depth: int, stop_requested, on_progress):
+            on_progress(2, 5, "РќР°Р№РґРµРЅ")
+            return MerchantSearchResult(found=True, page=2, position=5)
+
+    notifier = FakeNotifier()
+    service = MerchantCycleService(
+        gateway=FakeGateway(),
+        logger=AppLogger(),
+        found_accounts_file=tmp_path / "found_accounts.txt",
+        position_sound_notifier=notifier,
+    )
+
+    state = AppState()
+    state.browser.window_title = "Bybit - ILYA BB - 1"
+    state.search = SearchSettings(account_name="Mannequin", depth="4")
+
+    def fail_append(result):
+        raise OSError("disk full")
+
+    service._append_found_account = fail_append  # type: ignore[method-assign]
+
+    try:
+        service.run_live_cycle(
+            state,
+            stop_requested=lambda: False,
+            on_progress=lambda *_: None,
+        )
+    except OSError:
+        pass
+    else:
+        raise AssertionError("expected OSError")
+
+    assert notifier.calls == 0
 
 
 def test_live_cycle_stops_without_recreating_after_stop_request(tmp_path: Path) -> None:

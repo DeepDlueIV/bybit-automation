@@ -25,7 +25,7 @@ def build_main_window() -> MainWindow:
     from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
     from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
     from bybit_automation.services.merchant_cycle_service import MerchantCycleService
-    from bybit_automation.services.sound_notifier import ErrorSoundNotifier, TopPositionSoundNotifier
+    from bybit_automation.services.sound_notifier import ErrorSoundNotifier, AccountFoundSoundNotifier
 
     app_paths = AppPaths.from_cwd()
     logger = AppLogger(log_file=app_paths.log_file)
@@ -35,7 +35,7 @@ def build_main_window() -> MainWindow:
         driver=ExistingBrowserWindowDriver(logger=logger),
         logger=logger,
     )
-    position_sound_notifier = TopPositionSoundNotifier()
+    position_sound_notifier = AccountFoundSoundNotifier(on_playback=lambda mode: logger.info("Звуковое уведомление: системный Windows." if mode == "system" else "Звуковое уведомление: fallback beep."))
     error_sound_notifier = ErrorSoundNotifier()
     merchant_cycle_service = MerchantCycleService(
         gateway=bybit_existing_browser_service,

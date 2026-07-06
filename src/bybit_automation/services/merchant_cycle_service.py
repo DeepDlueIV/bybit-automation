@@ -52,7 +52,7 @@ class LiveBybitGateway(Protocol):
 
 
 class PositionSoundNotifier(Protocol):
-    def notify_if_top_position(self, position: int) -> None:
+    def notify(self) -> None:
         ...
 
 
@@ -141,6 +141,7 @@ class MerchantCycleService:
                 self.logger.info("Аккаунт найден, цикл завершён успешно.")
                 result = self._success_result(current_ad, search_result, attempts)
                 self._append_found_account(result)
+                self._notify_found_account_recorded()
                 return result
             if search_result.found:
                 self.logger.info("Аккаунт найден, но текущее объявление не прочитано. Продолжаю цикл создания объявления.")
@@ -208,6 +209,12 @@ class MerchantCycleService:
         with self.found_accounts_file.open("a", encoding="utf-8") as handle:
             handle.write(block)
 
+    def _notify_found_account_recorded(self) -> None:
+        if self.position_sound_notifier is None:
+            return
+        self.position_sound_notifier.notify()
+        self.logger.info("Звуковое уведомление о найденном аккаунте отправлено.")
+
     def _success_result(
         self,
         advertisement: AdvertisementSnapshot,
@@ -220,9 +227,7 @@ class MerchantCycleService:
         self.logger.info(f"цена {advertisement.price}")
         if advertisement.created_at:
             self.logger.info(f"дата объявления {advertisement.created_at}")
-        absolute_position = ((search_result.page - 1) * 10) + search_result.position
-        if self.position_sound_notifier is not None and 1 <= absolute_position <= 10:
-            self.position_sound_notifier.notify_if_top_position(absolute_position)
+
         message = "Аккаунт найден"
         return MerchantCycleResult(
             success=True,
