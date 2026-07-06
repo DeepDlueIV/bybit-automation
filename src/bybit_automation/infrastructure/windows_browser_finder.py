@@ -3,9 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from pywinauto import Desktop
-
 from bybit_automation.infrastructure.existing_browser_window_driver import get_process_image_path
+
+
+def Desktop(*args, **kwargs):
+    from pywinauto import Desktop as PywinautoDesktop
+
+    return PywinautoDesktop(*args, **kwargs)
 
 
 @dataclass

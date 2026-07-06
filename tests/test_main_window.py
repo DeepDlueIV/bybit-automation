@@ -6,7 +6,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QGroupBox
 
 from bybit_automation.controllers.app_controller import AppController
+from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.gui.main_window import MainWindow
+from bybit_automation.gui.sections.browser_section import BrowserSection
 from bybit_automation.gui.sections.search_section import SearchSection
 from bybit_automation.services.logging_service import AppLogger
 from bybit_automation.services.settings_service import JsonSettingsService
@@ -68,6 +70,22 @@ def test_search_section_updates_last_found_position_range(qtbot) -> None:
     section.set_last_found_position(17)
 
     assert section.last_found_position_label.text() == "Последняя найдена позиция: 17"
+
+
+def test_browser_section_exposes_automation_modes(qtbot) -> None:
+    section = BrowserSection()
+    qtbot.addWidget(section)
+
+    modes = [section.automation_mode_combo.itemText(index) for index in range(section.automation_mode_combo.count())]
+    assert modes == [
+        AutomationMode.INCOGNITON_UIA,
+        AutomationMode.INCOGNITON_PLAYWRIGHT_CDP,
+        AutomationMode.PLAYWRIGHT_PROFILE,
+    ]
+
+    section.automation_mode_combo.setCurrentText(AutomationMode.PLAYWRIGHT_PROFILE)
+
+    assert section.get_state().automation_mode == AutomationMode.PLAYWRIGHT_PROFILE
 
 
 def test_main_window_places_cycle_block_outside_search_group(qtbot, tmp_path: Path) -> None:

@@ -12,6 +12,14 @@ class AppPaths:
     found_accounts_file: Path
     log_file: Path
 
+    @property
+    def playwright_profile_dir(self) -> Path:
+        return self.data_dir / "playwright-profile"
+
+    @property
+    def playwright_artifacts_dir(self) -> Path:
+        return self.data_dir / "playwright-artifacts"
+
     @classmethod
     def from_cwd(cls) -> "AppPaths":
         root_dir = Path(__file__).resolve().parents[3]

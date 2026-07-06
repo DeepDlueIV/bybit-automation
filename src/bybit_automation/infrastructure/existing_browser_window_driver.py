@@ -4,22 +4,26 @@ import ctypes
 import re
 import time
 from ctypes import wintypes
-from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from pywinauto import Desktop
-from pywinauto.keyboard import send_keys
-from pywinauto.uia_defines import NoPatternInterfaceError
-
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
+from bybit_automation.models.payment_method import PaymentMethodState
 from bybit_automation.services.logging_service import AppLogger
 
 
-@dataclass(frozen=True)
-class PaymentMethodState:
-    bank_transfer: bool
-    mobile_top_up: bool
-    cash_deposit: bool
+NoPatternInterfaceError = Exception
+
+
+def Desktop(*args, **kwargs):
+    from pywinauto import Desktop as PywinautoDesktop
+
+    return PywinautoDesktop(*args, **kwargs)
+
+
+def send_keys(*args, **kwargs) -> None:
+    from pywinauto.keyboard import send_keys as pywinauto_send_keys
+
+    pywinauto_send_keys(*args, **kwargs)
 
 
 class ExistingBrowserWindowDriver:
@@ -979,8 +983,11 @@ class ExistingBrowserWindowDriver:
         snippets: list[str] = []
 
         self.focus(window_title)
-        send_keys("{HOME}")
-        time.sleep(0.2)
+        try:
+            send_keys("{HOME}")
+            time.sleep(0.2)
+        except Exception as error:
+            self._log(f"read_price: не удалось отправить HOME, читаю текущую позицию страницы: {error}")
 
         for _ in range(6):
             try:

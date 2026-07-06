@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.browser_discovery import BrowserDiscoveryResult
 
 
 @dataclass
 class BrowserStatus:
     browser_name: str = "Incogniton"
+    automation_mode: str = AutomationMode.INCOGNITON_UIA
     ads_tab_status: str = "Не подключено"
     sell_tab_status: str = "Не подключено"
     connection_status: str = "Не подключено"

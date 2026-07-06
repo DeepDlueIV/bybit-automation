@@ -5,9 +5,6 @@ import time
 from dataclasses import dataclass
 from typing import Iterable
 
-from pywinauto import Desktop
-from pywinauto.keyboard import send_keys
-
 
 WINDOW_TITLE_MARKERS = ("Bybit", "bybit", "ILYA BB")
 PATTERN_NAMES = (
@@ -18,6 +15,18 @@ PATTERN_NAMES = (
     "iface_expand_collapse",
     "iface_legacy_iaccessible",
 )
+
+
+def Desktop(*args, **kwargs):
+    from pywinauto import Desktop as PywinautoDesktop
+
+    return PywinautoDesktop(*args, **kwargs)
+
+
+def send_keys(*args, **kwargs) -> None:
+    from pywinauto.keyboard import send_keys as pywinauto_send_keys
+
+    pywinauto_send_keys(*args, **kwargs)
 
 
 @dataclass(frozen=True)

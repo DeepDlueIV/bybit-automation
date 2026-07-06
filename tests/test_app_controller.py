@@ -4,6 +4,7 @@ from pathlib import Path
 
 from bybit_automation.controllers.app_controller import AppController, position_range_label
 from bybit_automation.infrastructure.paths import AppPaths
+from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
 from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
@@ -224,6 +225,54 @@ def test_run_listing_cycle_iteration_creates_collects_and_records_found_account(
     assert "Дата объявления 2026-07-04 22:19:47" in found_text
     assert controller.last_found_position_range == "2"
     assert notifier.calls == 1
+
+
+def test_run_listing_cycle_iteration_uses_selected_automation_mode_service(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    test_paths = AppPaths(root_dir=tmp_path, data_dir=tmp_path / "data", settings_file=tmp_path / "settings.json", found_accounts_file=tmp_path / "data" / "found_accounts.txt", log_file=tmp_path / "data" / "app.log")
+
+    class FailingUiaService:
+        def create_advertisement(self, state):
+            raise AssertionError("UIA service must not be used for Playwright profile mode")
+
+    class FakePlaywrightService:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def create_advertisement(self, state):
+            self.calls.append(("create_advertisement", state.browser.automation_mode))
+            return AdvertisementSnapshot("pw-ad-1", "82,01", "Покупка")
+
+        def collect_all_merchants(self, window_title: str, depth: int):
+            self.calls.append(("collect_all_merchants", window_title, depth))
+            return ["Alpha", "Mannequin"]
+
+        def read_current_advertisement(self, window_title: str):
+            self.calls.append(("read_current_advertisement", window_title))
+            return AdvertisementSnapshot("pw-ad-1", "82,01", "Покупка", "2026-07-06 12:00:00")
+
+    playwright_service = FakePlaywrightService()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_existing_browser_service=FailingUiaService(),
+        bybit_browser_services={AutomationMode.PLAYWRIGHT_PROFILE: playwright_service},
+        app_paths=test_paths,
+    )
+    state = controller.default_state()
+    state.browser.automation_mode = AutomationMode.PLAYWRIGHT_PROFILE
+    state.browser.window_title = "Playwright profile"
+    state.search.account_name = "Mannequin"
+    state.search.depth = "2"
+
+    found = controller.run_listing_cycle_iteration(state)
+
+    assert found is True
+    assert playwright_service.calls == [
+        ("create_advertisement", AutomationMode.PLAYWRIGHT_PROFILE),
+        ("collect_all_merchants", "Playwright profile", 2),
+        ("read_current_advertisement", "Playwright profile"),
+    ]
 
 
 def test_run_listing_cycle_iteration_returns_false_when_account_not_found(tmp_path: Path, monkeypatch) -> None:

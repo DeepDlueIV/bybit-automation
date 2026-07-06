@@ -21,7 +21,9 @@ from bybit_automation.services.settings_service import JsonSettingsService
 
 def build_main_window() -> MainWindow:
     from bybit_automation.infrastructure.existing_browser_window_driver import ExistingBrowserWindowDriver
+    from bybit_automation.infrastructure.playwright_browser_driver import PlaywrightBrowserDriver
     from bybit_automation.infrastructure.windows_browser_finder import WindowsBrowserFinder
+    from bybit_automation.models.automation_mode import AutomationMode
     from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
     from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
     from bybit_automation.services.merchant_cycle_service import MerchantCycleService
@@ -35,6 +37,29 @@ def build_main_window() -> MainWindow:
         driver=ExistingBrowserWindowDriver(logger=logger),
         logger=logger,
     )
+    playwright_profile_service = BybitExistingBrowserService(
+        driver=PlaywrightBrowserDriver(
+            logger=logger,
+            mode=AutomationMode.PLAYWRIGHT_PROFILE,
+            user_data_dir=app_paths.playwright_profile_dir,
+            artifacts_dir=app_paths.playwright_artifacts_dir,
+        ),
+        logger=logger,
+    )
+    incogniton_cdp_service = BybitExistingBrowserService(
+        driver=PlaywrightBrowserDriver(
+            logger=logger,
+            mode=AutomationMode.INCOGNITON_PLAYWRIGHT_CDP,
+            user_data_dir=app_paths.playwright_profile_dir,
+            artifacts_dir=app_paths.playwright_artifacts_dir,
+        ),
+        logger=logger,
+    )
+    browser_services = {
+        AutomationMode.INCOGNITON_UIA: bybit_existing_browser_service,
+        AutomationMode.PLAYWRIGHT_PROFILE: playwright_profile_service,
+        AutomationMode.INCOGNITON_PLAYWRIGHT_CDP: incogniton_cdp_service,
+    }
     position_sound_notifier = AccountFoundSoundNotifier(on_playback=lambda mode: logger.info("Звуковое уведомление: системный Windows." if mode == "system" else "Звуковое уведомление: fallback beep."))
     error_sound_notifier = ErrorSoundNotifier()
     merchant_cycle_service = MerchantCycleService(
@@ -43,12 +68,23 @@ def build_main_window() -> MainWindow:
         found_accounts_file=app_paths.found_accounts_file,
         position_sound_notifier=position_sound_notifier,
     )
+    merchant_cycle_services = {
+        mode: MerchantCycleService(
+            gateway=service,
+            logger=logger,
+            found_accounts_file=app_paths.found_accounts_file,
+            position_sound_notifier=position_sound_notifier,
+        )
+        for mode, service in browser_services.items()
+    }
     controller = AppController(
         settings_service=settings_service,
         logger=logger,
         browser_discovery_service=browser_discovery_service,
         merchant_cycle_service=merchant_cycle_service,
         bybit_existing_browser_service=bybit_existing_browser_service,
+        bybit_browser_services=browser_services,
+        merchant_cycle_services=merchant_cycle_services,
         position_sound_notifier=position_sound_notifier,
         app_paths=app_paths,
     )

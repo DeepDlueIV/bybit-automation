@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.app_state import BrowserStatus
 
 
@@ -19,6 +20,8 @@ class BrowserSection(QWidget):
         super().__init__()
         self.browser_combo = QComboBox()
         self.browser_combo.addItems(["Incogniton", "Chrome", "Edge", "Brave", "Chromium", "Firefox"])
+        self.automation_mode_combo = QComboBox()
+        self.automation_mode_combo.addItems(AutomationMode.choices())
         self.ads_tab_label = QLabel("Не подключено")
         self.sell_tab_label = QLabel("Не подключено")
         self.connection_label = QLabel("Не подключено")
@@ -30,6 +33,7 @@ class BrowserSection(QWidget):
         details = QWidget()
         form = QFormLayout(details)
         form.addRow("Выбор браузера", self.browser_combo)
+        form.addRow("Режим автоматизации", self.automation_mode_combo)
         form.addRow("Вкладка Ads", self.ads_tab_label)
         form.addRow("Вкладка Sell", self.sell_tab_label)
         form.addRow("Подключение", self.connection_label)
@@ -52,6 +56,7 @@ class BrowserSection(QWidget):
     def get_state(self) -> BrowserStatus:
         return BrowserStatus(
             browser_name=self.browser_combo.currentText(),
+            automation_mode=self.automation_mode_combo.currentText(),
             ads_tab_status=self.ads_tab_label.text(),
             sell_tab_status=self.sell_tab_label.text(),
             connection_status=self.connection_label.text(),
@@ -63,6 +68,9 @@ class BrowserSection(QWidget):
         index = self.browser_combo.findText(state.browser_name)
         if index >= 0:
             self.browser_combo.setCurrentIndex(index)
+        mode_index = self.automation_mode_combo.findText(state.automation_mode)
+        if mode_index >= 0:
+            self.automation_mode_combo.setCurrentIndex(mode_index)
         self.ads_tab_label.setText(state.ads_tab_status)
         self.sell_tab_label.setText(state.sell_tab_status)
         self.connection_label.setText(state.connection_status)

@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from bybit_automation.infrastructure.existing_browser_window_driver import PaymentMethodState
 from bybit_automation.models.app_state import AppState
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
+from bybit_automation.models.payment_method import PaymentMethodState
 from bybit_automation.services.logging_service import AppLogger
 
 

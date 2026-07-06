@@ -5,6 +5,7 @@ description = "Phase 1 desktop application scaffold for future browser automatio
 requires-python = ">=3.11"
 dependencies = [
     "PySide6==6.11.1",
+    "playwright==1.57.0",
     "pywinauto==0.6.9",
 ]
 

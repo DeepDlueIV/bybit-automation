@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from bybit_automation.infrastructure.paths import AppPaths
+from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.app_state import AppState
 from bybit_automation.models.merchant_cycle import MerchantCycleResult
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
@@ -32,6 +33,8 @@ class AppController:
         browser_discovery_service: BrowserDiscoveryService | None = None,
         merchant_cycle_service: MerchantCycleService | None = None,
         bybit_existing_browser_service: BybitExistingBrowserService | None = None,
+        bybit_browser_services: dict[str, Any] | None = None,
+        merchant_cycle_services: dict[str, MerchantCycleService] | None = None,
         position_sound_notifier: PositionSoundNotifier | None = None,
         app_paths: AppPaths | None = None,
     ) -> None:
@@ -40,6 +43,12 @@ class AppController:
         self._browser_discovery_service = browser_discovery_service
         self._merchant_cycle_service = merchant_cycle_service
         self._bybit_existing_browser_service = bybit_existing_browser_service
+        self._bybit_browser_services = bybit_browser_services or {}
+        if bybit_existing_browser_service is not None:
+            self._bybit_browser_services.setdefault(AutomationMode.INCOGNITON_UIA, bybit_existing_browser_service)
+        self._merchant_cycle_services = merchant_cycle_services or {}
+        if merchant_cycle_service is not None:
+            self._merchant_cycle_services.setdefault(AutomationMode.INCOGNITON_UIA, merchant_cycle_service)
         self._position_sound_notifier = position_sound_notifier
         self._app_paths = app_paths or AppPaths.from_cwd()
         self._last_found_position = 0
@@ -72,6 +81,12 @@ class AppController:
     def placeholder_action(self, action_name: str) -> None:
         self._logger.info(f"{action_name} пока не реализовано.")
 
+    def _browser_service_for(self, state: AppState) -> Any | None:
+        return self._bybit_browser_services.get(state.browser.automation_mode) or self._bybit_existing_browser_service
+
+    def _merchant_cycle_service_for(self, state: AppState) -> MerchantCycleService | None:
+        return self._merchant_cycle_services.get(state.browser.automation_mode) or self._merchant_cycle_service
+
     def discover_browser(self, browser_name: str) -> AppState:
         if self._browser_discovery_service is None:
             self._logger.info("Сервис поиска браузера не подключен.")
@@ -84,47 +99,59 @@ class AppController:
         return state
 
     def run_merchant_cycle(self, state: AppState, *, max_attempts: int = 3) -> MerchantCycleResult | None:
-        if self._merchant_cycle_service is None:
+        merchant_cycle_service = self._merchant_cycle_service_for(state)
+        if merchant_cycle_service is None:
             self._logger.info("Сервис цикла Bybit пока не подключен.")
             return None
-        return self._merchant_cycle_service.run_cycle(
+        return merchant_cycle_service.run_cycle(
             state.advertisement,
             state.search,
             max_attempts=max_attempts,
         )
 
     def start_merchant_search(self, state: AppState, *, on_progress) -> MerchantCycleResult | None:
-        if self._merchant_cycle_service is None:
+        merchant_cycle_service = self._merchant_cycle_service_for(state)
+        if merchant_cycle_service is None:
             self._logger.info("Сервис live-поиска Bybit пока не подключен.")
             return None
-        return self._merchant_cycle_service.run_live_cycle(
+        return merchant_cycle_service.run_live_cycle(
             state,
             stop_requested=lambda: False,
             on_progress=on_progress,
         )
 
     def stop_merchant_search(self) -> None:
-        if self._merchant_cycle_service is None:
-            return
-        self._merchant_cycle_service.request_stop()
+        services = list(self._merchant_cycle_services.values())
+        if self._merchant_cycle_service is not None:
+            services.append(self._merchant_cycle_service)
+        seen: set[int] = set()
+        for service in services:
+            if id(service) in seen:
+                continue
+            seen.add(id(service))
+            if service is not None:
+                service.request_stop()
 
     def fill_advertisement_form(self, state: AppState) -> bool:
-        if self._bybit_existing_browser_service is None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None:
             self._logger.info("Сервис заполнения формы в текущем браузере пока не подключен.")
             return False
-        return self._bybit_existing_browser_service.fill_advertisement_form(state)
+        return browser_service.fill_advertisement_form(state)
 
     def collect_all_merchants(self, state: AppState) -> list[str]:
-        if self._bybit_existing_browser_service is None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None:
             self._logger.info("Сервис сбора мерчантов пока не подключен.")
             return []
         depth = int(state.search.depth) if state.search.depth and state.search.depth.isdigit() else 4
-        return self._bybit_existing_browser_service.collect_all_merchants(
+        return browser_service.collect_all_merchants(
             state.browser.window_title, depth
         )
 
     def run_listing_cycle_iteration(self, state: AppState, *, stop_check: Callable[[], bool] = lambda: False) -> bool:
-        if self._bybit_existing_browser_service is None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None:
             self._logger.info("Сервис Bybit для цикла пока не подключён.")
             return False
 
@@ -142,13 +169,13 @@ class AppController:
 
         depth = int(state.search.depth) if state.search.depth and state.search.depth.isdigit() else 4
         self._logger.info("Цикл: удаляю старое объявление и создаю новое.")
-        self._bybit_existing_browser_service.create_advertisement(state)
+        browser_service.create_advertisement(state)
 
         if stop_check():
             return False
 
         self._logger.info(f"Цикл: собираю мерчантов, глубина {depth} страниц.")
-        merchants = self._bybit_existing_browser_service.collect_all_merchants(state.browser.window_title, depth)
+        merchants = browser_service.collect_all_merchants(state.browser.window_title, depth)
         temp_path = self._app_paths.data_dir / "merchants_temp.txt"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_text("\n".join(merchants) + ("\n" if merchants else ""), encoding="utf-8")
@@ -163,7 +190,7 @@ class AppController:
             return False
 
         try:
-            snapshot = self._bybit_existing_browser_service.read_current_advertisement(state.browser.window_title)
+            snapshot = browser_service.read_current_advertisement(state.browser.window_title)
         except Exception as error:
             self._logger.info(f"Цикл: не удалось прочитать объявление: {error}")
             snapshot = None
@@ -206,7 +233,8 @@ class AppController:
         self._logger.info("Звуковое уведомление о найденном аккаунте отправлено.")
 
     def find_my_account(self, state: AppState) -> None:
-        if self._bybit_existing_browser_service is None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None:
             self._logger.info("Сервис поиска Bybit пока не подключен.")
             return
 
@@ -234,7 +262,7 @@ class AppController:
         self._logger.info(f"Аккаунт '{account_name}' найден на позиции {found_idx}. Читаю данные объявления.")
 
         try:
-            snapshot = self._bybit_existing_browser_service.read_current_advertisement(state.browser.window_title)
+            snapshot = browser_service.read_current_advertisement(state.browser.window_title)
         except Exception as error:
             self._logger.info(f"Не удалось прочитать объявление: {error}")
             snapshot = None
@@ -255,10 +283,11 @@ class AppController:
         self._logger.info(f"Аккаунт '{account_name}' найден на позиции {found_idx}. Данные добавлены в found_accounts.txt.")
 
     def fetch_current_price(self, state: AppState) -> AppState:
-        if self._bybit_existing_browser_service is None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None:
             self._logger.info("Сервис чтения цены из текущего браузера пока не подключен.")
             return state
-        price = self._bybit_existing_browser_service.fetch_current_price(state.browser.window_title)
+        price = browser_service.fetch_current_price(state.browser.window_title)
         updated_state = AppState.from_dict(state.to_dict())
         updated_state.advertisement.fixed_price = price
         self._logger.info(f"Подтянул актуальную цену: {price}")
