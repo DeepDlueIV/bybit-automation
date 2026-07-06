@@ -73,13 +73,17 @@ class PlaywrightBrowserDriver:
         if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
             chrome_executable = self._find_chrome_executable()
             if chrome_executable is not None:
-                port = self._find_free_port()
-                command = self._build_manual_chrome_command(
-                    chrome_executable=chrome_executable,
-                    remote_debugging_port=port,
-                )
-                self._log(f"запускаю системный Chrome с профилем: {self._user_data_dir}")
-                self._chrome_process = subprocess.Popen(command)
+                port = self._find_existing_debug_port()
+                if port is None:
+                    port = self._find_free_port()
+                    command = self._build_manual_chrome_command(
+                        chrome_executable=chrome_executable,
+                        remote_debugging_port=port,
+                    )
+                    self._log(f"запускаю системный Chrome с профилем: {self._user_data_dir}")
+                    self._chrome_process = subprocess.Popen(command)
+                else:
+                    self._log(f"подключаюсь к уже открытому Chrome с профилем на порту {port}")
                 endpoint = f"http://127.0.0.1:{port}"
                 self._browser = self._connect_to_manual_chrome(endpoint)
                 self._context = self._browser.contexts[0] if self._browser.contexts else self._browser.new_context()
@@ -122,8 +126,38 @@ class PlaywrightBrowserDriver:
             f"--user-data-dir={self._user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-extensions",
             "about:blank",
         ]
+
+    def _iter_chrome_command_lines(self) -> list[str]:
+        try:
+            completed = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*chrome.exe' } | ForEach-Object { $_.CommandLine }",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+        except Exception:
+            return []
+        return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+
+    def _find_existing_debug_port(self) -> int | None:
+        profile = str(self._user_data_dir).lower()
+        for command_line in self._iter_chrome_command_lines():
+            normalized = command_line.lower()
+            if profile not in normalized:
+                continue
+            match = re.search(r"--remote-debugging-port=(\d+)", command_line)
+            if match:
+                return int(match.group(1))
+        return None
 
     def _connect_to_manual_chrome(self, endpoint: str) -> Any:
         last_error: Exception | None = None

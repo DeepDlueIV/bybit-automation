@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QComboBox,
-    QFormLayout,
+    QFrame,
+    QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -30,29 +31,48 @@ class BrowserSection(QWidget):
         self.tabs_summary_label.setWordWrap(True)
         self.check_browser_button = QPushButton("Проверить браузер")
         self.open_playwright_profile_button = QPushButton("Открыть Playwright-профиль")
+        self.check_browser_button.setMaximumWidth(180)
+        self.open_playwright_profile_button.setMaximumWidth(240)
 
-        details = QWidget()
-        form = QFormLayout(details)
-        form.addRow("Выбор браузера", self.browser_combo)
-        form.addRow("Режим автоматизации", self.automation_mode_combo)
-        form.addRow("Вкладка Ads", self.ads_tab_label)
-        form.addRow("Вкладка Sell", self.sell_tab_label)
-        form.addRow("Подключение", self.connection_label)
-        form.addRow("Окно браузера", self.window_title_label)
-        form.addRow("Вкладки", self.tabs_summary_label)
-        form.addRow(self.check_browser_button)
-        form.addRow(self.open_playwright_profile_button)
+        self.window_title_label.setWordWrap(True)
+        self.tabs_summary_label.setMaximumHeight(36)
 
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        scroll_area.setWidget(details)
+        actions_layout = QHBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.addWidget(self.check_browser_button)
+        actions_layout.addWidget(self.open_playwright_profile_button)
+        actions_layout.addStretch(1)
+
+        self.browser_grid_layout = QGridLayout()
+        self.browser_grid_layout.setHorizontalSpacing(12)
+        self.browser_grid_layout.setVerticalSpacing(6)
+        self.browser_grid_layout.addWidget(QLabel("Браузер"), 0, 0)
+        self.browser_grid_layout.addWidget(self.browser_combo, 0, 1)
+        self.browser_grid_layout.addWidget(QLabel("Автоматизация"), 0, 2)
+        self.browser_grid_layout.addWidget(self.automation_mode_combo, 0, 3)
+        self.browser_grid_layout.addWidget(QLabel("Подключение"), 1, 0)
+        self.browser_grid_layout.addWidget(self.connection_label, 1, 1)
+        self.browser_grid_layout.addWidget(QLabel("Ads"), 1, 2)
+        self.browser_grid_layout.addWidget(self.ads_tab_label, 1, 3)
+        self.browser_grid_layout.addWidget(QLabel("Sell"), 2, 0)
+        self.browser_grid_layout.addWidget(self.sell_tab_label, 2, 1)
+        self.browser_grid_layout.addWidget(QLabel("Окно"), 2, 2)
+        self.browser_grid_layout.addWidget(self.window_title_label, 2, 3)
+        self.browser_grid_layout.addLayout(actions_layout, 3, 0, 1, 2)
+        self.browser_grid_layout.addWidget(QLabel("Вкладки"), 3, 2)
+        self.browser_grid_layout.addWidget(self.tabs_summary_label, 3, 3)
+        self.browser_grid_layout.setColumnStretch(1, 2)
+        self.browser_grid_layout.setColumnStretch(3, 3)
+
+        details = QFrame()
+        details.setLayout(self.browser_grid_layout)
 
         group = QGroupBox("Браузер")
         group_layout = QVBoxLayout(group)
-        group_layout.addWidget(scroll_area)
+        group_layout.addWidget(details)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(group)
 
     def get_state(self) -> BrowserStatus:

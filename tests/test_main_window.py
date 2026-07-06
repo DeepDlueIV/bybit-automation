@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QGroupBox
+from PySide6.QtWidgets import QApplication, QGridLayout, QGroupBox, QScrollArea
 
 from bybit_automation.controllers.app_controller import AppController
 from bybit_automation.models.automation_mode import AutomationMode
@@ -93,6 +93,17 @@ def test_browser_section_has_open_playwright_profile_button(qtbot) -> None:
     qtbot.addWidget(section)
 
     assert section.open_playwright_profile_button.text() == "Открыть Playwright-профиль"
+
+
+def test_browser_section_uses_compact_grid_without_inner_scroll(qtbot) -> None:
+    section = BrowserSection()
+    qtbot.addWidget(section)
+
+    assert section.findChildren(QScrollArea) == []
+    assert isinstance(section.browser_grid_layout, QGridLayout)
+    assert section.browser_grid_layout.columnCount() == 4
+    assert section.check_browser_button.maximumWidth() <= 220
+    assert section.open_playwright_profile_button.maximumWidth() <= 260
 
 
 def test_main_window_places_cycle_block_outside_search_group(qtbot, tmp_path: Path) -> None:

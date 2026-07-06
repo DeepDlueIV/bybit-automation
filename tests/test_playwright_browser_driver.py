@@ -77,7 +77,7 @@ def test_playwright_profile_fallback_keeps_extensions_enabled(tmp_path) -> None:
     ]
 
 
-def test_playwright_profile_manual_chrome_command_uses_minimal_flags(tmp_path) -> None:
+def test_playwright_profile_manual_chrome_command_disables_extensions_for_stable_testing(tmp_path) -> None:
     driver = PlaywrightBrowserDriver(
         logger=AppLogger(),
         mode=AutomationMode.PLAYWRIGHT_PROFILE,
@@ -96,9 +96,9 @@ def test_playwright_profile_manual_chrome_command_uses_minimal_flags(tmp_path) -
         f"--user-data-dir={tmp_path / 'profile'}",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-extensions",
         "about:blank",
     ]
-    assert not any("disable-extensions" in arg for arg in command)
 
 
 def test_open_profile_does_not_connect_playwright_cdp_for_manual_browser(tmp_path, monkeypatch) -> None:
@@ -131,6 +131,26 @@ def test_open_profile_does_not_connect_playwright_cdp_for_manual_browser(tmp_pat
             f"--user-data-dir={tmp_path / 'profile'}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-extensions",
             "about:blank",
         ]
     ]
+
+
+def test_playwright_profile_finds_existing_debug_port_for_same_profile(tmp_path, monkeypatch) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    command_line = (
+        '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" '
+        '--remote-debugging-port=63398 '
+        f'"--user-data-dir={tmp_path / "profile"}" '
+        '--no-first-run about:blank'
+    )
+
+    monkeypatch.setattr(driver, "_iter_chrome_command_lines", lambda: [command_line])
+
+    assert driver._find_existing_debug_port() == 63398
