@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from bybit_automation.models.app_state import AppState
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
@@ -109,6 +111,38 @@ def test_fetch_current_price_uses_existing_sell_tab() -> None:
     assert ("ensure_sell_tab", "Buy crypto with currency via Bybit P2P Crypto Trading - ILYA BB - 1") in driver.calls
     assert ("refresh_page", "Buy crypto with currency via Bybit P2P Crypto Trading - ILYA BB - 1") in driver.calls
     assert ("read_current_sell_price", "Buy crypto with currency via Bybit P2P Crypto Trading - ILYA BB - 1") in driver.calls
+
+
+def test_diagnose_sell_page_uses_driver(tmp_path: Path) -> None:
+    class Driver(FakeDriver):
+        def diagnose_sell_page(self, window_title: str):
+            self.calls.append(("diagnose_sell_page", window_title))
+            return tmp_path / "sell-diagnostics.json"
+
+    driver = Driver()
+    service = BybitExistingBrowserService(driver=driver, logger=AppLogger())
+
+    result = service.diagnose_sell_page("Bybit")
+
+    assert result == tmp_path / "sell-diagnostics.json"
+    assert ("focus", "Bybit") in driver.calls
+    assert ("diagnose_sell_page", "Bybit") in driver.calls
+
+
+def test_diagnose_ads_page_uses_driver(tmp_path: Path) -> None:
+    class Driver(FakeDriver):
+        def diagnose_ads_page(self, window_title: str):
+            self.calls.append(("diagnose_ads_page", window_title))
+            return tmp_path / "ads-diagnostics.json"
+
+    driver = Driver()
+    service = BybitExistingBrowserService(driver=driver, logger=AppLogger())
+
+    result = service.diagnose_ads_page("Bybit")
+
+    assert result == tmp_path / "ads-diagnostics.json"
+    assert ("focus", "Bybit") in driver.calls
+    assert ("diagnose_ads_page", "Bybit") in driver.calls
 
 
 def test_fill_form_runs_expected_sequence_for_existing_window() -> None:

@@ -13,6 +13,14 @@ def test_default_automation_mode_is_incogniton_uia() -> None:
     assert state.browser.automation_mode == AutomationMode.INCOGNITON_UIA
 
 
+def test_legacy_browser_names_are_migrated() -> None:
+    chrome_state = AppState.from_dict({"browser": {"browser_name": "Chrome"}})
+    chromium_state = AppState.from_dict({"browser": {"browser_name": "Chromium"}})
+
+    assert chrome_state.browser.browser_name == "System Chrome"
+    assert chromium_state.browser.browser_name == "Playwright Chromium"
+
+
 def test_app_paths_exposes_playwright_runtime_dirs(tmp_path: Path) -> None:
     from bybit_automation.infrastructure.paths import AppPaths
 

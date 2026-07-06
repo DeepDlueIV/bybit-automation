@@ -177,6 +177,8 @@ class MainWindow(QMainWindow):
         self.advertisement_section.get_current_price_button.clicked.connect(self.on_fetch_current_price)
         self.browser_section.check_browser_button.clicked.connect(self.on_discover_browser)
         self.browser_section.open_playwright_profile_button.clicked.connect(self.on_open_playwright_profile)
+        self.browser_section.diagnose_sell_button.clicked.connect(self.on_diagnose_sell_page)
+        self.browser_section.diagnose_ads_button.clicked.connect(self.on_diagnose_ads_page)
         self.search_section.collect_merchants_button.clicked.connect(self.on_collect_merchants)
         self.search_section.find_account_button.clicked.connect(self.on_start_search)
         self.search_section.start_search_button.clicked.connect(self.on_start_cycle)
@@ -238,8 +240,11 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"{action_name} пока не реализовано")
 
     def on_discover_browser(self) -> None:
-        state = self._controller.discover_browser(self.browser_section.browser_combo.currentText())
-        self.apply_state(state)
+        current_state = self.collect_state()
+        discovered_state = self._controller.discover_browser(self.browser_section.browser_combo.currentText())
+        current_state.browser = discovered_state.browser
+        current_state.browser.automation_mode = self.browser_section.automation_mode_combo.currentText()
+        self.apply_state(current_state)
         self.status_bar.showMessage("Браузер проверен")
 
     def on_open_playwright_profile(self) -> None:
@@ -275,6 +280,30 @@ class MainWindow(QMainWindow):
             return
         self.apply_state(state)
         self.status_bar.showMessage("Актуальная цена подтянута")
+
+    def on_diagnose_sell_page(self) -> None:
+        try:
+            path = self._controller.diagnose_sell_page(self.collect_state())
+        except (RuntimeError, KeyError) as error:
+            self._logger.info(_describe_exception(error))
+            self.status_bar.showMessage("Не удалось выполнить Sell-диагностику")
+            return
+        if path is None:
+            self.status_bar.showMessage("Sell-диагностика недоступна")
+            return
+        self.status_bar.showMessage(f"Sell-диагностика сохранена: {path}")
+
+    def on_diagnose_ads_page(self) -> None:
+        try:
+            path = self._controller.diagnose_ads_page(self.collect_state())
+        except (RuntimeError, KeyError) as error:
+            self._logger.info(_describe_exception(error))
+            self.status_bar.showMessage("Не удалось выполнить Ads-диагностику")
+            return
+        if path is None:
+            self.status_bar.showMessage("Ads-диагностика недоступна")
+            return
+        self.status_bar.showMessage(f"Ads-диагностика сохранена: {path}")
 
     def on_start_search(self) -> None:
         state = self.collect_state()

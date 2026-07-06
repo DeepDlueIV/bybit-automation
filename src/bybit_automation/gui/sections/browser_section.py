@@ -20,7 +20,7 @@ class BrowserSection(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.browser_combo = QComboBox()
-        self.browser_combo.addItems(["Incogniton", "Chrome", "Edge", "Brave", "Chromium", "Firefox"])
+        self.browser_combo.addItems(["Incogniton", "System Chrome", "Playwright Chromium"])
         self.automation_mode_combo = QComboBox()
         self.automation_mode_combo.addItems(AutomationMode.choices())
         self.ads_tab_label = QLabel("Не подключено")
@@ -31,8 +31,12 @@ class BrowserSection(QWidget):
         self.tabs_summary_label.setWordWrap(True)
         self.check_browser_button = QPushButton("Проверить браузер")
         self.open_playwright_profile_button = QPushButton("Открыть Playwright-профиль")
+        self.diagnose_sell_button = QPushButton("Диагностика Sell")
+        self.diagnose_ads_button = QPushButton("Диагностика Ads")
         self.check_browser_button.setMaximumWidth(180)
         self.open_playwright_profile_button.setMaximumWidth(240)
+        self.diagnose_sell_button.setMaximumWidth(180)
+        self.diagnose_ads_button.setMaximumWidth(180)
 
         self.window_title_label.setWordWrap(True)
         self.tabs_summary_label.setMaximumHeight(36)
@@ -41,6 +45,8 @@ class BrowserSection(QWidget):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.addWidget(self.check_browser_button)
         actions_layout.addWidget(self.open_playwright_profile_button)
+        actions_layout.addWidget(self.diagnose_sell_button)
+        actions_layout.addWidget(self.diagnose_ads_button)
         actions_layout.addStretch(1)
 
         self.browser_grid_layout = QGridLayout()

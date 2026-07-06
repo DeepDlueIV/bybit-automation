@@ -19,6 +19,13 @@ class BrowserStatus:
     ads_tab_title: str = ""
     sell_tab_title: str = ""
 
+    def __post_init__(self) -> None:
+        legacy_browser_names = {
+            "Chrome": "System Chrome",
+            "Chromium": "Playwright Chromium",
+        }
+        self.browser_name = legacy_browser_names.get(self.browser_name, self.browser_name)
+
 
 @dataclass
 class AdvertisementSettings:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -81,6 +82,7 @@ class PlaywrightBrowserDriver:
                         remote_debugging_port=port,
                     )
                     self._log(f"запускаю системный Chrome с профилем: {self._user_data_dir}")
+                    self._log(f"аргументы запуска Chrome: {command}")
                     self._chrome_process = subprocess.Popen(command)
                 else:
                     self._log(f"подключаюсь к уже открытому Chrome с профилем на порту {port}")
@@ -126,7 +128,6 @@ class PlaywrightBrowserDriver:
             f"--user-data-dir={self._user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-extensions",
             "about:blank",
         ]
 
@@ -163,7 +164,7 @@ class PlaywrightBrowserDriver:
         last_error: Exception | None = None
         for _ in range(30):
             try:
-                return self._playwright.chromium.connect_over_cdp(endpoint)
+                return self._playwright.chromium.connect_over_cdp(endpoint, timeout=5_000)
             except Exception as error:
                 last_error = error
                 time.sleep(0.2)
@@ -212,15 +213,22 @@ class PlaywrightBrowserDriver:
             if self._same_base_url(page.url, url):
                 self._log(f"использую существующую вкладку {role}: {page.url}")
                 page.bring_to_front()
-                page.wait_for_load_state("domcontentloaded", timeout=self.READY_TIMEOUT_MS)
+                self._wait_for_domcontentloaded_best_effort(page, role=role)
                 return page
         page = context.new_page()
         self._log(f"открываю вкладку {role}: {url}")
-        page.goto(url, wait_until="domcontentloaded", timeout=self.READY_TIMEOUT_MS)
+        page.goto(url, wait_until="commit", timeout=self.READY_TIMEOUT_MS)
+        self._wait_for_domcontentloaded_best_effort(page, role=role)
         return page
 
     def _same_base_url(self, current_url: str, target_url: str) -> bool:
         return current_url.split("?", 1)[0].rstrip("/") == target_url.rstrip("/")
+
+    def _wait_for_domcontentloaded_best_effort(self, page: Any, *, role: str) -> None:
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=self.READY_TIMEOUT_MS)
+        except Exception as error:
+            self._log(f"вкладка {role}: domcontentloaded не дождались, продолжаю по DOM: {error}")
 
     def _body_text(self, page: Any) -> str:
         page.wait_for_load_state("domcontentloaded", timeout=self.READY_TIMEOUT_MS)
@@ -267,14 +275,121 @@ class PlaywrightBrowserDriver:
 
     def read_current_sell_price(self, window_title: str) -> str:
         self.ensure_sell_tab(window_title)
-        text = self._body_text(self._sell_page)
-        match = re.search(r"\b\d+,\d{2}\s*RUB\b", text)
-        if match:
-            return match.group().replace("RUB", "").strip()
-        match = re.search(r"\b\d+,\d{2}\b", text)
-        if match:
-            return match.group().strip()
+        return self._wait_for_sell_price(window_title)
         raise RuntimeError("Не удалось прочитать цену на Sell-странице через Playwright.")
+
+    def _wait_for_sell_price(self, window_title: str) -> str:
+        deadline = time.monotonic() + (self.READY_TIMEOUT_MS / 1000)
+        last_candidates: list[str] = []
+        while time.monotonic() < deadline:
+            text = self._body_text(self._sell_page)
+            last_candidates = self._extract_price_candidates(text)
+            price = self._select_sell_price(last_candidates)
+            if price:
+                return price
+            time.sleep(0.3)
+        report_path = self.diagnose_sell_page(window_title)
+        raise RuntimeError(
+            "Не удалось прочитать цену на Sell-странице через Playwright. "
+            f"Последние кандидаты: {last_candidates}. Диагностика: {report_path}"
+        )
+
+    def diagnose_sell_page(self, window_title: str) -> Path:
+        self.ensure_sell_tab(window_title)
+        page = self._sell_page
+        text = self._body_text(page)
+        price_candidates = self._extract_price_candidates(text)
+        timestamp = int(time.time())
+        self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+        screenshot_path = self._artifacts_dir / f"{timestamp}-sell-diagnostics.png"
+        report_path = self._artifacts_dir / f"{timestamp}-sell-diagnostics.json"
+        try:
+            page.screenshot(path=str(screenshot_path), full_page=True)
+        except Exception as error:
+            self._log(f"не удалось сохранить screenshot Sell-диагностики: {error}")
+            screenshot_path = Path("")
+        payload = {
+            "url": page.url,
+            "title": page.title(),
+            "price_candidates": price_candidates,
+            "screenshot": str(screenshot_path) if screenshot_path else "",
+            "body_text": text,
+        }
+        report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._log(
+            f"Sell-диагностика сохранена: {report_path}; кандидаты цен: {price_candidates[:10]}"
+        )
+        return report_path
+
+    def diagnose_ads_page(self, window_title: str) -> Path:
+        self.ensure_ads_tab(window_title)
+        page = self._ads_page
+        text = self._body_text(page)
+        candidates = self._extract_advertisement_candidates(text)
+        timestamp = int(time.time())
+        self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+        screenshot_path = self._artifacts_dir / f"{timestamp}-ads-diagnostics.png"
+        report_path = self._artifacts_dir / f"{timestamp}-ads-diagnostics.json"
+        try:
+            page.screenshot(path=str(screenshot_path), full_page=True)
+        except Exception as error:
+            self._log(f"не удалось сохранить screenshot Ads-диагностики: {error}")
+            screenshot_path = Path("")
+        payload = {
+            "url": page.url,
+            "title": page.title(),
+            "advertisement_candidates": candidates,
+            "screenshot": str(screenshot_path) if screenshot_path else "",
+            "body_text": text,
+        }
+        report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._log(f"Ads-диагностика сохранена: {report_path}; кандидаты: {candidates}")
+        return report_path
+
+    def _extract_price_candidates(self, text: str) -> list[str]:
+        candidates: list[str] = []
+        patterns = [
+            r"\b\d+(?:[ .]\d{3})*,\d{2}\s*RUB\b",
+            r"\b\d+(?:[ .]\d{3})*,\d{2}\b",
+            r"(?<![,.\d])\b\d+(?:\.\d{2})?\s*RUB\b",
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+                value = re.sub(r"\s+", " ", match.group()).strip()
+                if any(value == candidate or value in candidate for candidate in candidates):
+                    continue
+                candidates = [candidate for candidate in candidates if candidate not in value]
+                candidates.append(value)
+        return candidates
+
+    def _select_sell_price(self, candidates: list[str]) -> str:
+        for candidate in candidates:
+            if "rub" not in candidate.lower():
+                continue
+            value = candidate.lower().replace("rub", "").strip()
+            value = value.replace("\u00a0", "").replace(" ", "")
+            try:
+                numeric = float(value.replace(",", "."))
+            except ValueError:
+                continue
+            if numeric > 0:
+                return value
+        return ""
+
+    def _extract_advertisement_candidates(self, text: str) -> dict[str, list[str]]:
+        return {
+            "advertisement_ids": self._unique_matches(text, r"\b\d{10,}\b"),
+            "prices": self._extract_price_candidates(text),
+            "created_at": self._unique_matches(text, r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}"),
+        }
+
+    def _unique_matches(self, text: str, pattern: str) -> list[str]:
+        values: list[str] = []
+        for match in re.finditer(pattern, text):
+            value = match.group().strip()
+            if value not in values:
+                values.append(value)
+        return values
 
     def read_current_advertisement(self, window_title: str) -> AdvertisementSnapshot | None:
         self.ensure_ads_tab(window_title)
@@ -304,11 +419,11 @@ class PlaywrightBrowserDriver:
         self._click_and_expect(
             page,
             lambda: delete_button.click(timeout=self.READY_TIMEOUT_MS),
-            lambda: page.get_by_role("button", name=re.compile("Подтверд|Удал|Confirm|Delete", re.IGNORECASE)).first().wait_for(timeout=self.READY_TIMEOUT_MS),
+            lambda: page.get_by_role("button", name=re.compile("Подтверд|Удал|Confirm|Delete", re.IGNORECASE)).first.wait_for(timeout=self.READY_TIMEOUT_MS),
             step_name="delete-open-confirm",
             expected="popup подтверждения удаления",
         )
-        confirm = page.get_by_role("button", name=re.compile("Подтверд|Удал|Confirm|Delete", re.IGNORECASE)).first()
+        confirm = page.get_by_role("button", name=re.compile("Подтверд|Удал|Confirm|Delete", re.IGNORECASE)).first
         self._click_and_expect(
             page,
             lambda: confirm.click(timeout=self.READY_TIMEOUT_MS),
@@ -351,7 +466,7 @@ class PlaywrightBrowserDriver:
         return MerchantSearchResult(found=False)
 
     def _open_listing_page(self, page: Any, page_number: int) -> None:
-        control = page.get_by_role("button", name=str(page_number)).or_(page.get_by_text(str(page_number), exact=True)).first()
+        control = page.get_by_role("button", name=str(page_number)).or_(page.get_by_text(str(page_number), exact=True)).first
         self._click_and_expect(
             page,
             lambda: control.click(timeout=self.READY_TIMEOUT_MS),
@@ -393,19 +508,23 @@ class PlaywrightBrowserDriver:
     def open_standard_p2p_ad_form(self, window_title: str) -> None:
         self.ensure_ads_tab(window_title)
         page = self._ads_page
-        open_button = page.get_by_role("button", name=re.compile("Разместить|Post", re.IGNORECASE)).first()
-        self._click_and_expect(
-            page,
-            lambda: open_button.click(timeout=self.READY_TIMEOUT_MS),
-            lambda: page.get_by_text(re.compile("Стандартная P2P|Standard P2P", re.IGNORECASE)).first().wait_for(timeout=self.READY_TIMEOUT_MS),
-            step_name="open-ad-kind-popup",
-            expected="выбор стандартной P2P-торговли",
-        )
-        option = page.get_by_text(re.compile("Стандартная P2P|Standard P2P", re.IGNORECASE)).first()
+        option = page.get_by_text(re.compile("Стандартная P2P|Standard P2P", re.IGNORECASE)).first
+        try:
+            # Если предыдущая попытка уже открыла модалку, не кликаем кнопку под overlay повторно.
+            option.wait_for(timeout=1_000)
+        except Exception:
+            open_button = page.get_by_text(re.compile("Разместить объяв|Post", re.IGNORECASE)).first
+            self._click_and_expect(
+                page,
+                lambda: open_button.click(timeout=self.READY_TIMEOUT_MS),
+                lambda: option.wait_for(timeout=self.READY_TIMEOUT_MS),
+                step_name="open-ad-kind-popup",
+                expected="выбор стандартной P2P-торговли",
+            )
         self._click_and_expect(
             page,
             lambda: option.click(timeout=self.READY_TIMEOUT_MS),
-            lambda: page.get_by_text(re.compile("Фиксированная|Fixed", re.IGNORECASE)).first().wait_for(timeout=self.READY_TIMEOUT_MS),
+            lambda: page.get_by_text(re.compile("Фиксированная|Fixed", re.IGNORECASE)).first.wait_for(timeout=self.READY_TIMEOUT_MS),
             step_name="open-standard-p2p-form",
             expected="форма объявления открыта",
         )
@@ -418,7 +537,7 @@ class PlaywrightBrowserDriver:
 
     def set_payment_time(self, window_title: str, payment_time: str) -> None:
         page = self._ads_page
-        opener = page.get_by_text(re.compile("Длительность оплаты|Payment Time", re.IGNORECASE)).first()
+        opener = page.get_by_text(re.compile("Длительность оплаты|Payment Time", re.IGNORECASE)).first
         option_name = "30мин." if payment_time.startswith("30") else "15мин."
         self._click_and_expect(
             page,
@@ -445,7 +564,7 @@ class PlaywrightBrowserDriver:
         last_error: Exception | None = None
         for label in labels:
             try:
-                field = page.get_by_label(re.compile(label, re.IGNORECASE)).first()
+                field = page.get_by_label(re.compile(label, re.IGNORECASE)).first
                 field.fill(value, timeout=self.READY_TIMEOUT_MS)
                 return
             except Exception as error:
@@ -480,7 +599,7 @@ class PlaywrightBrowserDriver:
         self._click_label_or_role(page, "Подтверд", step_name="confirm-payment-methods")
 
     def _set_checkbox_by_text(self, page: Any, pattern: re.Pattern[str], checked: bool) -> None:
-        checkbox = page.get_by_role("checkbox", name=pattern).first()
+        checkbox = page.get_by_role("checkbox", name=pattern).first
         if checked:
             checkbox.check(timeout=self.READY_TIMEOUT_MS)
         else:
@@ -488,7 +607,7 @@ class PlaywrightBrowserDriver:
 
     def accept_terms(self, window_title: str) -> None:
         page = self._ads_page
-        checkbox = page.get_by_role("checkbox", name=re.compile("прочитал|соглаша|agree", re.IGNORECASE)).first()
+        checkbox = page.get_by_role("checkbox", name=re.compile("прочитал|соглаша|agree", re.IGNORECASE)).first
         checkbox.check(timeout=self.READY_TIMEOUT_MS)
 
     def submit_advertisement(self, window_title: str) -> None:
@@ -501,7 +620,7 @@ class PlaywrightBrowserDriver:
 
     def _click_label_or_role(self, page: Any, text: str, *, step_name: str) -> None:
         pattern = re.compile(re.escape(text), re.IGNORECASE)
-        target = page.get_by_role("button", name=pattern).or_(page.get_by_text(pattern)).first()
+        target = page.get_by_role("button", name=pattern).or_(page.get_by_text(pattern)).first
         self._click_and_expect(
             page,
             lambda: target.click(timeout=self.READY_TIMEOUT_MS),

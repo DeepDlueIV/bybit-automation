@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication, QGridLayout, QGroupBox, QScrollArea
 
 from bybit_automation.controllers.app_controller import AppController
 from bybit_automation.models.automation_mode import AutomationMode
+from bybit_automation.models.app_state import AppState
 from bybit_automation.gui.main_window import MainWindow
 from bybit_automation.gui.sections.browser_section import BrowserSection
 from bybit_automation.gui.sections.search_section import SearchSection
@@ -52,6 +53,32 @@ def test_main_window_has_expected_defaults(qtbot, tmp_path: Path) -> None:
     assert window.advertisement_section.security_password_edit.text() == "Salam1337$"
 
 
+def test_discover_browser_preserves_current_form_state(qtbot, tmp_path: Path) -> None:
+    class FakeController(AppController):
+        def discover_browser(self, browser_name: str):
+            state = AppState()
+            state.browser.browser_name = browser_name
+            state.browser.window_title = "Chrome - Bybit"
+            state.browser.connection_status = "Подключено"
+            return state
+
+    controller = FakeController(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
+    window = MainWindow(controller=controller, logger=controller._logger)
+    qtbot.addWidget(window)
+
+    window.browser_section.browser_combo.setCurrentText("System Chrome")
+    window.browser_section.automation_mode_combo.setCurrentText(AutomationMode.PLAYWRIGHT_PROFILE)
+    window.advertisement_section.fixed_price_edit.setText("123,45")
+    window.search_section.depth_edit.setText("9")
+
+    window.on_discover_browser()
+
+    assert window.browser_section.automation_mode_combo.currentText() == AutomationMode.PLAYWRIGHT_PROFILE
+    assert window.advertisement_section.fixed_price_edit.text() == "123,45"
+    assert window.search_section.depth_edit.text() == "9"
+    assert window.browser_section.window_title_label.text() == "Chrome - Bybit"
+
+
 def test_search_section_has_cycle_group_with_start_and_stop_buttons(qtbot) -> None:
     section = SearchSection()
     qtbot.addWidget(section)
@@ -88,11 +115,22 @@ def test_browser_section_exposes_automation_modes(qtbot) -> None:
     assert section.get_state().automation_mode == AutomationMode.PLAYWRIGHT_PROFILE
 
 
+def test_browser_section_exposes_supported_browsers_only(qtbot) -> None:
+    section = BrowserSection()
+    qtbot.addWidget(section)
+
+    browsers = [section.browser_combo.itemText(index) for index in range(section.browser_combo.count())]
+
+    assert browsers == ["Incogniton", "System Chrome", "Playwright Chromium"]
+
+
 def test_browser_section_has_open_playwright_profile_button(qtbot) -> None:
     section = BrowserSection()
     qtbot.addWidget(section)
 
     assert section.open_playwright_profile_button.text() == "Открыть Playwright-профиль"
+    assert section.diagnose_sell_button.text() == "Диагностика Sell"
+    assert section.diagnose_ads_button.text() == "Диагностика Ads"
 
 
 def test_browser_section_uses_compact_grid_without_inner_scroll(qtbot) -> None:

@@ -1,0 +1,4 @@
+data/playwright-profile/
+data/playwright-artifacts/
+__pycache__/
+.pytest_cache/

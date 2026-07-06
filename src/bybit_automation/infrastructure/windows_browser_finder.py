@@ -71,14 +71,14 @@ class WindowsBrowserFinder:
 
         if browser_name == "Incogniton":
             return "\\incogniton\\browser\\" in image_path and image_path.endswith("chrome.exe")
-        if browser_name == "Chrome":
-            return image_path.endswith("\\chrome.exe") and "\\incogniton\\browser\\" not in image_path
-        if browser_name == "Edge":
-            return image_path.endswith("\\msedge.exe")
-        if browser_name == "Brave":
-            return image_path.endswith("\\brave.exe")
-        if browser_name == "Chromium":
-            return image_path.endswith("\\chromium.exe")
-        if browser_name == "Firefox":
-            return image_path.endswith("\\firefox.exe")
+        if browser_name == "System Chrome":
+            return (
+                image_path.endswith("\\chrome.exe")
+                and "\\incogniton\\browser\\" not in image_path
+                and "\\ms-playwright\\" not in image_path
+            )
+        if browser_name == "Playwright Chromium":
+            return "\\ms-playwright\\" in image_path and (
+                image_path.endswith("\\chrome.exe") or image_path.endswith("\\chromium.exe")
+            )
         return browser_name.lower() in title_lower

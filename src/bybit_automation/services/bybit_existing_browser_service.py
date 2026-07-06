@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Protocol
 
 from bybit_automation.models.app_state import AppState
@@ -14,6 +15,8 @@ class BrowserDriver(Protocol):
     def ensure_sell_tab(self, window_title: str) -> None: ...
     def refresh_page(self, window_title: str) -> None: ...
     def read_current_sell_price(self, window_title: str) -> str: ...
+    def diagnose_sell_page(self, window_title: str) -> Path: ...
+    def diagnose_ads_page(self, window_title: str) -> Path: ...
     def ensure_ads_tab(self, window_title: str) -> None: ...
     def read_current_advertisement(self, window_title: str) -> AdvertisementSnapshot | None: ...
     def delete_current_advertisement(self, window_title: str) -> None: ...
@@ -67,6 +70,30 @@ class BybitExistingBrowserService:
         self.driver.refresh_page(window_title)
         self.logger.info("Читаю актуальную цену из рабочей Sell-вкладки.")
         return self.driver.read_current_sell_price(window_title)
+
+    def diagnose_sell_page(self, window_title: str) -> Path:
+        window_title = window_title.strip()
+        if not window_title:
+            raise RuntimeError("Сначала нужно определить рабочее окно браузера.")
+        if not hasattr(self.driver, "diagnose_sell_page"):
+            raise RuntimeError("Выбранный браузерный режим не поддерживает Sell-диагностику.")
+        self.driver.focus(window_title)
+        self.logger.info("Запускаю безопасную Sell-диагностику Playwright.")
+        path = self.driver.diagnose_sell_page(window_title)
+        self.logger.info(f"Sell-диагностика готова: {path}")
+        return path
+
+    def diagnose_ads_page(self, window_title: str) -> Path:
+        window_title = window_title.strip()
+        if not window_title:
+            raise RuntimeError("Сначала нужно определить рабочее окно браузера.")
+        if not hasattr(self.driver, "diagnose_ads_page"):
+            raise RuntimeError("Выбранный браузерный режим не поддерживает Ads-диагностику.")
+        self.driver.focus(window_title)
+        self.logger.info("Запускаю безопасную Ads-диагностику Playwright.")
+        path = self.driver.diagnose_ads_page(window_title)
+        self.logger.info(f"Ads-диагностика готова: {path}")
+        return path
 
     def open_profile(self, window_title: str) -> None:
         self.logger.info("Открываю Playwright-профиль без запуска цикла.")

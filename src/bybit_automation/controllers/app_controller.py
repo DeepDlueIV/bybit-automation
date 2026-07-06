@@ -89,6 +89,9 @@ class AppController:
         if browser_service is None or not hasattr(browser_service, "open_profile"):
             self._logger.info("Выбранный режим не поддерживает отдельное открытие профиля.")
             return False
+        self._logger.info(
+            f"Opening browser profile: browser={state.browser.browser_name}; automation={state.browser.automation_mode}."
+        )
         browser_service.open_profile(state.browser.window_title)
         return True
 
@@ -303,3 +306,17 @@ class AppController:
         updated_state.advertisement.fixed_price = price
         self._logger.info(f"Подтянул актуальную цену: {price}")
         return updated_state
+
+    def diagnose_sell_page(self, state: AppState) -> Path | None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None or not hasattr(browser_service, "diagnose_sell_page"):
+            self._logger.info("Sell-диагностика недоступна для выбранного режима браузера.")
+            return None
+        return browser_service.diagnose_sell_page(state.browser.window_title)
+
+    def diagnose_ads_page(self, state: AppState) -> Path | None:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None or not hasattr(browser_service, "diagnose_ads_page"):
+            self._logger.info("Ads-диагностика недоступна для выбранного режима браузера.")
+            return None
+        return browser_service.diagnose_ads_page(state.browser.window_title)

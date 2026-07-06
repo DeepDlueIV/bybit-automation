@@ -51,7 +51,7 @@ def test_discover_browser_updates_state(tmp_path: Path) -> None:
         browser_discovery_service=BrowserDiscoveryService(finder=FakeFinder()),
     )
 
-    state = controller.discover_browser("Chrome")
+    state = controller.discover_browser("System Chrome")
 
     assert state.browser.connection_status == "Подключено"
     assert state.browser.window_title == "Chrome - Bybit"

@@ -25,7 +25,7 @@ class FakeFinder:
 def test_discover_returns_connected_result_with_tabs():
     finder = FakeFinder(
         {
-            "Chrome": [
+            "System Chrome": [
                 FakeWindow(
                     title="Chrome - Bybit",
                     titles=["Bybit P2P", "Another Tab"],
@@ -35,7 +35,7 @@ def test_discover_returns_connected_result_with_tabs():
     )
     service = BrowserDiscoveryService(finder=finder)
 
-    result = service.discover("Chrome")
+    result = service.discover("System Chrome")
 
     assert result.connected is True
     assert result.window_title == "Chrome - Bybit"
@@ -45,7 +45,7 @@ def test_discover_returns_connected_result_with_tabs():
 def test_discover_marks_ads_and_sell_tabs_separately():
     finder = FakeFinder(
         {
-            "Chrome": [
+            "System Chrome": [
                 FakeWindow(
                     title="Chrome - Bybit",
                     titles=[
@@ -59,7 +59,7 @@ def test_discover_marks_ads_and_sell_tabs_separately():
     )
     service = BrowserDiscoveryService(finder=finder)
 
-    result = service.discover("Chrome")
+    result = service.discover("System Chrome")
 
     assert result.ads_tab_title == "Мои объявления | Bybit"
     assert result.sell_tab_title == "Продать USDT за RUB через криптотрейдинг на Bybit P2P"
@@ -68,7 +68,7 @@ def test_discover_marks_ads_and_sell_tabs_separately():
 def test_discover_returns_empty_result_when_browser_missing():
     service = BrowserDiscoveryService(finder=FakeFinder({}))
 
-    result = service.discover("Chrome")
+    result = service.discover("System Chrome")
 
     assert result.connected is False
     assert result.window_title == ""
