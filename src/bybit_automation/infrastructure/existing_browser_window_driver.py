@@ -259,6 +259,21 @@ class ExistingBrowserWindowDriver:
             except Exception:
                 return None
 
+    def _prefer_non_mouse_action_target(self, control):
+        """Для SVG/текстовых вложенных элементов предпочитаем кликабельного родителя."""
+        control_type = self._item_type(control)
+        if control_type not in {"Image", "Text"}:
+            return control
+        try:
+            parent = control.parent()
+        except Exception:
+            return control
+        if parent is None or parent is control:
+            return control
+        if self._item_type(parent) in {"Button", "Group", "Hyperlink", "ListItem", "MenuItem", "Text"}:
+            return parent
+        return control
+
     def _click_best(self, control, *, allow_forbidden_text: bool = False) -> None:
         text = self._item_text(control)
         if not allow_forbidden_text and self._is_forbidden_click_text(text):
@@ -394,11 +409,31 @@ class ExistingBrowserWindowDriver:
                 continue
             if control_type != "TabItem" or not title:
                 continue
+            if self._is_document_tab_item(control):
+                continue
             title_lower = title.lower()
             if title_lower in {"system", "minimize", "restore", "close"}:
                 continue
             tabs.append(control)
         return tabs
+
+    def _is_document_tab_item(self, control) -> bool:
+        current = control
+        for _ in range(8):
+            try:
+                current = current.parent()
+            except Exception:
+                return False
+            if current is None:
+                return False
+            try:
+                control_type = getattr(getattr(current, "element_info", None), "control_type", "")
+                title = current.window_text().strip().lower()
+            except Exception:
+                continue
+            if control_type == "Document" and any(part in title for part in self._BYBIT_DOCUMENT_TITLE_PARTS):
+                return True
+        return False
 
     def _control_value(self, control) -> str:
         try:
@@ -775,9 +810,17 @@ class ExistingBrowserWindowDriver:
         delete_icon = images_in_row[-1]
         self._log(f"delete_current_advertisement: последний Image в строке, type={self._item_type(delete_icon)}.")
 
-        # Кликаем по самой иконке (SVG) — событие всплывёт до родителя
-        self._log("delete_current_advertisement: кликаю по Image (SVG-иконке).")
-        delete_icon.click_input()
+        # Для SVG сначала пробуем invokable-родителя, чтобы не отнимать мышь у пользователя.
+        delete_target = self._prefer_non_mouse_action_target(delete_icon)
+        self._log(
+            "delete_current_advertisement: активирую кнопку удаления через "
+            f"{self._item_type(delete_target) or 'control'}."
+        )
+        try:
+            self._click_best(delete_target, allow_forbidden_text=True)
+        except RuntimeError:
+            self._log("delete_current_advertisement: безмышечная активация не сработала, физический клик мышью запрещен.")
+            raise
         time.sleep(1.0)
 
         # Ждём popup и ищем "Подтвердить"/"Удалить"
@@ -789,7 +832,7 @@ class ExistingBrowserWindowDriver:
             # Ещё одна попытка найти popup
             if not self._find_popup_confirm_button(window_title):
                 self._log("delete_current_advertisement: Enter не помог, пробую ПКМ по строке.")
-                row_data_item.click_input(button='right')
+                raise RuntimeError("Не удалось открыть popup удаления без мыши.")
                 time.sleep(0.5)
                 window = self._find_window(window_title)
                 deadline = time.time() + 5
@@ -830,7 +873,7 @@ class ExistingBrowserWindowDriver:
                     try:
                         self._click_best(control, allow_forbidden_text=True)
                     except RuntimeError:
-                        control.click_input()
+                        return False
                     time.sleep(0.3)
                     return True
             time.sleep(0.3)
@@ -987,10 +1030,7 @@ class ExistingBrowserWindowDriver:
         window = self._find_window(window_title)
         document = self._find_main_document(window)
         open_button = self._find_contains(document, text_part="Разместить", control_types=("Button", "Text"))
-        if self._item_type(open_button) == "Button":
-            open_button.click_input()
-        else:
-            self._click_best(open_button.parent() if self._item_type(open_button) == "Text" else open_button)
+        self._click_best(self._prefer_non_mouse_action_target(open_button))
         time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
         popup_option = None
@@ -1046,7 +1086,8 @@ class ExistingBrowserWindowDriver:
         try:
             address_bar.iface_value.SetValue(url)
         except Exception:
-            address_bar.click_input()
+            # Fallback без мыши: фокусируем адресную строку и вводим URL с клавиатуры.
+            address_bar.set_focus()
             send_keys("^a")
             time.sleep(0.2)
             send_keys(url, with_spaces=True)
@@ -1182,7 +1223,7 @@ class ExistingBrowserWindowDriver:
 
         document = self._find_main_document(self._find_window(window_title))
         opener = self._find_contains(document, text_part="Добавить", control_types=("Text",))
-        opener.parent().click_input()
+        self._click_best(self._prefer_non_mouse_action_target(opener))
         time.sleep(self.READY_POLL_SECONDS)
 
         window = self._find_window(window_title)
@@ -1194,7 +1235,7 @@ class ExistingBrowserWindowDriver:
             self._set_checkbox_state(email_control, True)
 
         confirm = self._find_contains(window, text_part="Подтверд", control_types=("Button",))
-        confirm.click_input()
+        self._click_best(confirm)
         time.sleep(self.FAST_ACTION_DELAY_SECONDS)
 
     def ensure_payment_methods(self, window_title: str, methods: PaymentMethodState) -> None:
@@ -1272,7 +1313,7 @@ class ExistingBrowserWindowDriver:
         try:
             target.iface_value.SetValue(password)
         except (NoPatternInterfaceError, Exception):
-            target.click_input()
+            target.set_focus()
             send_keys("^a")
             time.sleep(self.FAST_ACTION_DELAY_SECONDS)
             send_keys(password, with_spaces=True)

@@ -59,6 +59,82 @@ class ClickTrackingControl(FakeControl):
         self._clicked.append(self.window_text())
 
 
+class ParentTrackingControl(ClickTrackingControl):
+    def __init__(
+        self,
+        title: str,
+        control_type: str,
+        clicked: list[str],
+        parent_control: FakeControl,
+        descendants: list["FakeControl"] | None = None,
+    ) -> None:
+        super().__init__(title, control_type, clicked, descendants)
+        self._parent_control = parent_control
+
+    def parent(self):
+        return self._parent_control
+
+
+class ParentedControl(FakeControl):
+    def __init__(
+        self,
+        title: str,
+        control_type: str,
+        parent_control: FakeControl | None = None,
+        descendants: list["FakeControl"] | None = None,
+    ) -> None:
+        super().__init__(title, control_type, descendants)
+        self._parent_control = parent_control
+
+    def parent(self):
+        return self._parent_control if self._parent_control is not None else super().parent()
+
+
+class NoMouseClickControl(FakeControl):
+    def __init__(
+        self,
+        title: str,
+        control_type: str,
+        *,
+        descendants: list["FakeControl"] | None = None,
+        parent_control: FakeControl | None = None,
+    ) -> None:
+        super().__init__(title, control_type, descendants)
+        self._parent_control = parent_control
+
+    def click_input(self, *args, **kwargs) -> None:
+        raise AssertionError("mouse click must not be used")
+
+    def parent(self):
+        return self._parent_control if self._parent_control is not None else super().parent()
+
+
+class ValueTrackingControl(FakeControl):
+    def __init__(self, title: str, control_type: str, values: list[str], *, fail_set_value: bool = False) -> None:
+        super().__init__(title, control_type)
+        self._values = values
+        self._fail_set_value = fail_set_value
+
+    @property
+    def iface_value(self):
+        parent = self
+
+        class _Value:
+            @staticmethod
+            def SetValue(value: str) -> None:
+                if parent._fail_set_value:
+                    raise RuntimeError("value unavailable")
+                parent._values.append(value)
+
+        return _Value()
+
+    def set_focus(self) -> None:
+        self._values.append("focus")
+
+    def click_input(self, *args, **kwargs) -> None:
+        raise AssertionError("mouse click must not be used")
+
+
 class NoCoordinateControl(FakeControl):
     def __init__(self, title: str, control_type: str, events: list[str]) -> None:
         super().__init__(title, control_type)
@@ -424,6 +500,43 @@ def test_open_standard_p2p_ad_form_raises_when_popup_option_missing(monkeypatch)
         raise AssertionError("expected RuntimeError")
 
 
+def test_open_standard_p2p_ad_form_avoids_mouse_click_for_primary_button(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    window = FakeControl("Ads", "Window")
+    find_calls = {"count": 0}
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: object()  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.ADS_URL  # type: ignore[method-assign]
+    driver._click_best = lambda control: clicked.append(control.window_text())  # type: ignore[method-assign]
+
+    def fake_find_contains(root, **kwargs):
+        find_calls["count"] += 1
+        if find_calls["count"] == 1:
+            return NoMouseClickControl("Р Р°Р·РјРµСЃС‚РёС‚СЊ РѕР±СЉСЏРІР»РµРЅРёСЏ", "Button")
+        return FakeControl("РЎС‚Р°РЅРґР°СЂС‚РЅР°СЏ P2P-С‚РѕСЂРіРѕРІР»СЏ", "Text")
+
+    monkeypatch.setattr(driver, "_find_contains", fake_find_contains)
+    states = iter([False, True])
+    monkeypatch.setattr(driver, "_document_contains_any_text", lambda *_: next(states), raising=False)
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver.open_standard_p2p_ad_form("Bybit")
+
+    assert clicked == ["Р Р°Р·РјРµСЃС‚РёС‚СЊ РѕР±СЉСЏРІР»РµРЅРёСЏ", "РЎС‚Р°РЅРґР°СЂС‚РЅР°СЏ P2P-С‚РѕСЂРіРѕРІР»СЏ"]
+
+
+def test_prefer_non_mouse_action_target_keeps_real_button_instead_of_parent_group() -> None:
+    driver = ExistingBrowserWindowDriver()
+    parent = FakeControl("button-group", "Group")
+    button = NoMouseClickControl("Разместить объявления", "Button", parent_control=parent)
+
+    result = driver._prefer_non_mouse_action_target(button)
+
+    assert result is button
+
+
 def test_ensure_sell_tab_opens_only_missing_tab(monkeypatch) -> None:
     driver = ExistingBrowserWindowDriver()
     window = FakeControl("Bybit - ILYA BB - 1", "Window")
@@ -575,6 +688,75 @@ def test_ensure_ads_tab_skips_forbidden_all_ads_tabitem(monkeypatch) -> None:
     driver.ensure_ads_tab("Bybit - ILYA BB - 1")
 
     assert clicked_tabs == ["Dashboard"]
+
+
+def test_ensure_ads_tab_ignores_document_tabitems_and_uses_browser_tabs(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked_tabs: list[str] = []
+    current_url = {"value": driver.SELL_URL}
+
+    class BrowserTab(ParentedControl):
+        def __init__(self, title: str, next_url: str) -> None:
+            super().__init__(title, "TabItem")
+            self._next_url = next_url
+
+        def invoke(self) -> None:
+            clicked_tabs.append(self.window_text())
+            current_url["value"] = self._next_url
+
+    pane = ParentedControl("", "Pane")
+    document = ParentedControl("Buy crypto with currency via Bybit P2P Crypto Trading", "Document", pane)
+    group = ParentedControl("", "Group", document)
+    inner_tab_container = ParentedControl("", "Tab", group)
+    browser_tab_container = ParentedControl("", "Tab", pane)
+
+    internal_listing = BrowserTab("На листинге(2)", driver.ADS_URL)
+    internal_listing._parent_control = inner_tab_container
+    internal_all_ads = BrowserTab("Все объявления", driver.ADS_URL)
+    internal_all_ads._parent_control = inner_tab_container
+    browser_sell = BrowserTab("Продать USDT за RUB через криптотрейдинг на Bybit P2P", driver.SELL_URL)
+    browser_sell._parent_control = browser_tab_container
+    browser_ads = BrowserTab("Buy crypto with currency via Bybit P2P Crypto Trading", driver.ADS_URL)
+    browser_ads._parent_control = browser_tab_container
+
+    window = FakeControl("Bybit - ILYA BB - 1", "Window", [internal_listing, internal_all_ads, browser_sell, browser_ads])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: current_url["value"]  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver.ensure_ads_tab("Bybit - ILYA BB - 1")
+
+    assert clicked_tabs == [
+        "Продать USDT за RUB через криптотрейдинг на Bybit P2P",
+        "Buy crypto with currency via Bybit P2P Crypto Trading",
+    ]
+
+
+def test_tab_items_skip_tabitems_nested_inside_document_parent_chain() -> None:
+    driver = ExistingBrowserWindowDriver()
+
+    pane = ParentedControl("", "Pane")
+    document = ParentedControl("Buy crypto with currency via Bybit P2P Crypto Trading", "Document", pane)
+    group = ParentedControl("", "Group", document)
+    inner_tab_container = ParentedControl("", "Tab", group)
+    internal_listing = ParentedControl("На листинге(1)", "TabItem", inner_tab_container)
+    internal_all_ads = ParentedControl("Все объявления", "TabItem", inner_tab_container)
+
+    browser_tab_container = ParentedControl("", "Tab", pane)
+    browser_sell = ParentedControl("Продать USDT за RUB через криптотрейдинг на Bybit P2P", "TabItem", browser_tab_container)
+    browser_ads = ParentedControl("Buy crypto with currency via Bybit P2P Crypto Trading", "TabItem", browser_tab_container)
+
+    window = FakeControl(
+        "Bybit - ILYA BB - 1",
+        "Window",
+        [internal_listing, internal_all_ads, browser_sell, browser_ads],
+    )
+
+    assert [control.window_text() for control in driver._tab_items(window)] == [
+        "Продать USDT за RUB через криптотрейдинг на Bybit P2P",
+        "Buy crypto with currency via Bybit P2P Crypto Trading",
+    ]
 
 
 def test_ensure_sell_tab_fallback_uses_url_without_clicking_forbidden_all_ads_tab(monkeypatch) -> None:
@@ -1078,6 +1260,168 @@ def test_delete_current_advertisement_does_not_click_unrelated_buttons_when_dele
     driver._read_current_url = lambda _: driver.ADS_URL  # type: ignore[method-assign]
 
     driver.delete_current_advertisement("Bybit")
+
+
+def test_delete_current_advertisement_prefers_parent_invoke_over_mouse_click(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+
+    class InvokeTrackingControl(ClickTrackingControl):
+        def invoke(self) -> None:
+            self._clicked.append(self.window_text())
+
+    row = ClickTrackingControl("row", "DataItem", clicked)
+    share_icon = FakeControl("share", "Image")
+    edit_icon = FakeControl("edit", "Image")
+    delete_parent = InvokeTrackingControl("delete-parent", "Group", clicked)
+    delete_icon = NoMouseClickControl("delete-icon", "Image", parent_control=delete_parent)
+    row._descendants = [share_icon, edit_icon, delete_icon]
+    ad_id_control = ParentTrackingControl("123456", "Text", clicked, row)
+    document = FakeControl("My ads", "Document", descendants=[ad_id_control])
+    window = FakeControl("Bybit", "Window", [document])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.ADS_URL  # type: ignore[method-assign]
+    driver.read_current_advertisement = lambda _: AdvertisementSnapshot("123456", "81,02", "2026-07-04 22:19:47")  # type: ignore[method-assign]
+    driver._find_popup_confirm_button = lambda _: True  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver.delete_current_advertisement("Bybit")
+
+    assert clicked == ["delete-parent"]
+
+
+def test_open_url_fallback_uses_focus_instead_of_mouse_click(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    values: list[str] = []
+    address_bar = ValueTrackingControl("bybit.com/ru-RU/p2p/merchant-admin/ads", "Edit", values, fail_set_value=True)
+    window = FakeControl("Bybit", "Window", [address_bar])
+    sent_keys: list[str] = []
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver.focus = lambda _: None  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(driver_module, "send_keys", lambda keys, **kwargs: sent_keys.append(keys))
+
+    driver.open_url("Bybit", driver.SELL_URL)
+
+    assert values == ["focus"]
+    assert sent_keys == ["^a", driver.SELL_URL, "{ENTER}"]
+
+
+def test_ensure_counterparty_requirements_avoids_mouse_click_for_opener_and_confirm(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    checkbox_states: list[tuple[str, bool]] = []
+    opener_parent = ClickTrackingControl("requirements-group", "Group", clicked)
+    opener = NoMouseClickControl("Добавить", "Text", parent_control=opener_parent)
+    phone = FakeControl("Номер телефона", "CheckBox")
+    email = FakeControl("электронной почты", "CheckBox")
+    confirm = NoMouseClickControl("Подтвердить", "Button")
+    document = FakeControl("Create document", "Document")
+    window = FakeControl("Create window", "Window")
+
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._click_best = lambda control, **kwargs: clicked.append(control.window_text())  # type: ignore[method-assign]
+    driver._set_checkbox_state = lambda control, checked: checkbox_states.append((control.window_text(), checked))  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    def fake_find_contains(root, **kwargs):
+        text_part = kwargs["text_part"]
+        if "Добавить" in text_part:
+            return opener
+        if "Номер телефона" in text_part:
+            return phone
+        if "электронной почты" in text_part:
+            return email
+        if "Подтверд" in text_part:
+            return confirm
+        raise RuntimeError(text_part)
+
+    driver._find_contains = fake_find_contains  # type: ignore[method-assign]
+
+    driver.ensure_counterparty_requirements("Bybit", phone_linked=True, email_linked=True)
+
+    assert clicked == ["requirements-group", "Подтвердить"]
+    assert checkbox_states == [("Номер телефона", True), ("электронной почты", True)]
+
+
+def test_ensure_counterparty_requirements_returns_when_no_flags_set(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    events: list[str] = []
+
+    driver._find_main_document = lambda _: (_ for _ in ()).throw(AssertionError("document must not be requested"))  # type: ignore[method-assign]
+    driver._find_window = lambda _: (_ for _ in ()).throw(AssertionError("window must not be requested"))  # type: ignore[method-assign]
+    driver._click_best = lambda control, **kwargs: events.append("click")  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    driver.ensure_counterparty_requirements("Bybit", phone_linked=False, email_linked=False)
+
+    assert events == []
+
+
+def test_enter_security_password_fallback_uses_focus_instead_of_mouse_click(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    values: list[str] = []
+    sent_keys: list[str] = []
+    password_input = ValueTrackingControl("password", "Edit", values, fail_set_value=True)
+    confirm = ClickTrackingControl("РџРѕРґС‚РІРµСЂРґРёС‚СЊ", "Button", [])
+    window = FakeControl("Password popup", "Window", [confirm])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_input_after_label = lambda _root, _label: password_input  # type: ignore[method-assign]
+    driver._click_best = lambda control, **kwargs: sent_keys.append(f"click:{control.window_text()}")  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(driver_module, "send_keys", lambda keys, **kwargs: sent_keys.append(keys))
+
+    driver.enter_security_password("Bybit", "secret-password")
+
+    assert values == ["focus"]
+    assert sent_keys == ["^a", "secret-password", "{ENTER}"]
+
+
+def test_delete_current_advertisement_stops_without_mouse_fallback_when_delete_invoke_fails(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    clicked: list[str] = []
+    row = NoMouseClickControl("row", "DataItem")
+    share_icon = FakeControl("share", "Image")
+    edit_icon = FakeControl("edit", "Image")
+    delete_parent = FakeControl("delete-parent", "Group")
+    delete_icon = NoMouseClickControl("delete-icon", "Image", parent_control=delete_parent)
+    row._descendants = [share_icon, edit_icon, delete_icon]
+    ad_id_control = ParentTrackingControl("123456", "Text", clicked, row)
+    document = FakeControl("My ads", "Document", descendants=[ad_id_control])
+    window = FakeControl("Bybit", "Window", [document])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._find_main_document = lambda _: document  # type: ignore[method-assign]
+    driver._read_current_url = lambda _: driver.ADS_URL  # type: ignore[method-assign]
+    driver.read_current_advertisement = lambda _: AdvertisementSnapshot("123456", "81,02", "2026-07-04 22:19:47")  # type: ignore[method-assign]
+    driver._click_best = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("invoke failed"))  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    try:
+        driver.delete_current_advertisement("Bybit")
+    except RuntimeError as error:
+        assert "invoke failed" in str(error)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+
+def test_find_popup_confirm_button_does_not_use_mouse_fallback(monkeypatch) -> None:
+    driver = ExistingBrowserWindowDriver()
+    confirm = NoMouseClickControl("РџРѕРґС‚РІРµСЂРґРёС‚СЊ", "Button")
+    window = FakeControl("Confirm popup", "Window", [confirm])
+
+    driver._find_window = lambda _: window  # type: ignore[method-assign]
+    driver._click_best = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("invoke failed"))  # type: ignore[method-assign]
+    monkeypatch.setattr(driver_module.time, "sleep", lambda _: None)
+
+    result = driver._find_popup_confirm_button("Bybit")
+
+    assert result is False
 
 
 def test_search_merchant_does_not_click_faq_page_like_controls(monkeypatch) -> None:
