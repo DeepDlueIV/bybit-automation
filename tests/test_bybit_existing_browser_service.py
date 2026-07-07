@@ -145,6 +145,18 @@ def test_diagnose_ads_page_uses_driver(tmp_path: Path) -> None:
     assert ("diagnose_ads_page", "Bybit") in driver.calls
 
 
+def test_open_ads_form_for_smoke_check_only_opens_standard_form() -> None:
+    driver = FakeDriver()
+    service = BybitExistingBrowserService(driver=driver, logger=AppLogger())
+
+    service.open_ads_form_for_smoke_check("Bybit")
+
+    assert driver.calls == [
+        ("focus", "Bybit"),
+        ("open_standard_p2p_ad_form", "Bybit"),
+    ]
+
+
 def test_fill_form_runs_expected_sequence_for_existing_window() -> None:
     driver = FakeDriver()
     service = BybitExistingBrowserService(driver=driver, logger=AppLogger())

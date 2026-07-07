@@ -320,3 +320,11 @@ class AppController:
             self._logger.info("Ads-диагностика недоступна для выбранного режима браузера.")
             return None
         return browser_service.diagnose_ads_page(state.browser.window_title)
+
+    def open_ads_form_for_smoke_check(self, state: AppState) -> bool:
+        browser_service = self._browser_service_for(state)
+        if browser_service is None or not hasattr(browser_service, "open_ads_form_for_smoke_check"):
+            self._logger.info("Открытие формы Ads недоступно для выбранного режима браузера.")
+            return False
+        browser_service.open_ads_form_for_smoke_check(state.browser.window_title)
+        return True

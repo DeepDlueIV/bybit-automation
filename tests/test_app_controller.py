@@ -517,3 +517,27 @@ def test_run_listing_cycle_writes_account_when_read_snapshot_raises_oserror(tmp_
     found_text = (tmp_path / "data" / "found_accounts.txt").read_text(encoding="utf-8")
     assert "Mannequin" in found_text
     assert "Позиция 2" in found_text
+
+
+def test_open_ads_form_for_smoke_check_uses_selected_browser_service(tmp_path: Path) -> None:
+    class FakeService:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+
+        def open_ads_form_for_smoke_check(self, window_title: str) -> None:
+            self.calls.append(("open_ads_form_for_smoke_check", window_title))
+
+    service = FakeService()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_browser_services={AutomationMode.PLAYWRIGHT_PROFILE: service},
+    )
+    state = controller.default_state()
+    state.browser.automation_mode = AutomationMode.PLAYWRIGHT_PROFILE
+    state.browser.window_title = "Bybit"
+
+    result = controller.open_ads_form_for_smoke_check(state)
+
+    assert result is True
+    assert service.calls == [("open_ads_form_for_smoke_check", "Bybit")]

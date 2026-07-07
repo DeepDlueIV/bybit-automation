@@ -33,10 +33,12 @@ class BrowserSection(QWidget):
         self.open_playwright_profile_button = QPushButton("Открыть Playwright-профиль")
         self.diagnose_sell_button = QPushButton("Диагностика Sell")
         self.diagnose_ads_button = QPushButton("Диагностика Ads")
+        self.open_ads_form_button = QPushButton("Открыть форму Ads")
         self.check_browser_button.setMaximumWidth(180)
         self.open_playwright_profile_button.setMaximumWidth(240)
         self.diagnose_sell_button.setMaximumWidth(180)
         self.diagnose_ads_button.setMaximumWidth(180)
+        self.open_ads_form_button.setMaximumWidth(180)
 
         self.window_title_label.setWordWrap(True)
         self.tabs_summary_label.setMaximumHeight(36)
@@ -47,6 +49,7 @@ class BrowserSection(QWidget):
         actions_layout.addWidget(self.open_playwright_profile_button)
         actions_layout.addWidget(self.diagnose_sell_button)
         actions_layout.addWidget(self.diagnose_ads_button)
+        actions_layout.addWidget(self.open_ads_form_button)
         actions_layout.addStretch(1)
 
         self.browser_grid_layout = QGridLayout()

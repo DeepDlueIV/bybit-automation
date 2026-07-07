@@ -276,10 +276,9 @@ class PlaywrightBrowserDriver:
     def read_current_sell_price(self, window_title: str) -> str:
         self.ensure_sell_tab(window_title)
         return self._wait_for_sell_price(window_title)
-        raise RuntimeError("Не удалось прочитать цену на Sell-странице через Playwright.")
 
     def _wait_for_sell_price(self, window_title: str) -> str:
-        deadline = time.monotonic() + (self.READY_TIMEOUT_MS / 1000)
+        deadline = time.monotonic() + 45
         last_candidates: list[str] = []
         while time.monotonic() < deadline:
             text = self._body_text(self._sell_page)
@@ -394,13 +393,26 @@ class PlaywrightBrowserDriver:
     def read_current_advertisement(self, window_title: str) -> AdvertisementSnapshot | None:
         self.ensure_ads_tab(window_title)
         text = self._body_text(self._ads_page)
+        return self._extract_advertisement_snapshot_from_text(text)
+
+    def _extract_advertisement_snapshot_from_text(self, text: str) -> AdvertisementSnapshot | None:
         advertisement_id = self._first_match(text, r"\b\d{10,}\b")
-        price = self._first_match(text, r"\b\d+,\d{2}\s*RUB\b").replace("RUB", "").strip()
+        price = self._extract_advertisement_listing_price(text)
         created_at = self._first_match(text, r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
         if not advertisement_id or not price:
             return None
         side = "Покупка" if "Покупка" in text else "Продажа" if "Продажа" in text else ""
         return AdvertisementSnapshot(advertisement_id=advertisement_id, price=price, side=side, created_at=created_at)
+
+    def _extract_advertisement_listing_price(self, text: str) -> str:
+        for raw_line in text.splitlines():
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if "RUB" not in line.upper() or "-" in line:
+                continue
+            match = re.search(r"\b\d+(?:[ \u00a0]\d{3})*,\d{2}\s*RUB\b|\b\d+,\d{2}\s*RUB\b", line, re.IGNORECASE)
+            if match:
+                return match.group().replace("RUB", "").replace("\u00a0", " ").strip()
+        return ""
 
     def _first_match(self, text: str, pattern: str) -> str:
         match = re.search(pattern, text)
@@ -477,16 +489,27 @@ class PlaywrightBrowserDriver:
 
     def _extract_merchant_candidates(self, text: str) -> list[str]:
         candidates: list[str] = []
-        for raw_line in text.splitlines():
-            line = re.sub(r"\s+", " ", raw_line).strip()
+        lines = [re.sub(r"\s+", " ", raw_line).strip() for raw_line in text.splitlines()]
+        for index, line in enumerate(lines):
             normalized = self._normalize_merchant_name(line)
             if not normalized or self._is_non_merchant_text(normalized):
                 continue
-            if re.search(r"\b\d+\s*(исполнено|orders?|%)\b", line, flags=re.IGNORECASE):
-                name = re.split(r"\s+\d+\s*(?:исполнено|orders?|%)\b", line, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            stats_match = re.search(r"\b\d+\s*(исполнено|orders?|%)\b", line, flags=re.IGNORECASE)
+            if stats_match:
+                name = line[: stats_match.start()].strip()
+                if not name:
+                    name = self._merchant_name_before_stats(lines, index)
                 if name:
                     candidates.append(name)
         return candidates
+
+    def _merchant_name_before_stats(self, lines: list[str], stats_index: int) -> str:
+        for candidate in reversed(lines[max(0, stats_index - 3) : stats_index]):
+            cleaned = re.sub(r"\s+", " ", re.sub(r"[^\w\s.-]+", " ", candidate, flags=re.UNICODE)).strip()
+            normalized = self._normalize_merchant_name(cleaned)
+            if normalized and not self._is_non_merchant_text(normalized):
+                return cleaned
+        return ""
 
     def _normalize_merchant_name(self, text: str) -> str:
         return re.sub(r"\s+", " ", re.sub(r"[^\w\s.-]+", " ", text, flags=re.UNICODE)).strip().lower()
@@ -530,15 +553,30 @@ class PlaywrightBrowserDriver:
         )
 
     def select_trade_side(self, window_title: str, trade_side: str) -> None:
-        self._click_label_or_role(self._ads_page, trade_side, step_name="select-trade-side")
+        self._dismiss_payment_modal_if_open(self._ads_page)
+        button = self._ads_page.locator("button").filter(has_text=re.compile(f"^{re.escape(trade_side)}$", re.IGNORECASE)).first
+        self._click_and_expect(
+            self._ads_page,
+            lambda: button.click(timeout=self.READY_TIMEOUT_MS),
+            lambda: button.wait_for(timeout=self.READY_TIMEOUT_MS),
+            step_name="select-trade-side",
+            expected=f"выбран тип объявления '{trade_side}'",
+        )
 
     def set_fixed_price(self, window_title: str, price: str) -> None:
-        self._fill_by_label_patterns(self._ads_page, [r"Фиксированная", r"Fixed"], price, "fixed-price")
+        field = self._ads_page.locator('input[placeholder*="Фиксированная цена"], input[placeholder*="Fixed"]').first
+        field.fill(price, timeout=self.READY_TIMEOUT_MS)
 
     def set_payment_time(self, window_title: str, payment_time: str) -> None:
         page = self._ads_page
-        opener = page.get_by_text(re.compile("Длительность оплаты|Payment Time", re.IGNORECASE)).first
         option_name = "30мин." if payment_time.startswith("30") else "15мин."
+        body_text = self._body_text(page)
+        current_match = re.search(r"Длительность оплаты\s+(15мин\.|30мин\.)", body_text)
+        current_option = current_match.group(1) if current_match else ""
+        if current_option == option_name:
+            return
+        opener_name = current_option or ("15мин." if "15мин." in body_text else "30мин.")
+        opener = page.get_by_text(opener_name, exact=True).first
         self._click_and_expect(
             page,
             lambda: opener.click(timeout=self.READY_TIMEOUT_MS),
@@ -546,19 +584,28 @@ class PlaywrightBrowserDriver:
             step_name="open-payment-time",
             expected=f"вариант {option_name}",
         )
-        page.get_by_text(option_name, exact=True).click(timeout=self.READY_TIMEOUT_MS)
+        page.get_by_text(option_name, exact=True).last.click(timeout=self.READY_TIMEOUT_MS)
 
     def set_total_amount(self, window_title: str, total_amount: str) -> None:
-        self._fill_by_label_patterns(self._ads_page, [r"Общее количество", r"Total Amount"], total_amount, "total-amount")
+        self._ads_page.locator('input[placeholder="Ввести"], input[placeholder="Enter"]').first.fill(
+            total_amount,
+            timeout=self.READY_TIMEOUT_MS,
+        )
 
     def set_minimum_transaction(self, window_title: str, minimum_transaction: str) -> None:
-        self._fill_by_label_patterns(self._ads_page, [r"Мин.*сумма", r"Minimum"], minimum_transaction, "minimum-transaction")
+        self._ads_page.locator('input[placeholder="500"]').first.fill(
+            minimum_transaction,
+            timeout=self.READY_TIMEOUT_MS,
+        )
 
     def set_maximum_transaction(self, window_title: str, maximum_transaction: str) -> None:
-        self._fill_by_label_patterns(self._ads_page, [r"Макс.*сумма", r"Maximum"], maximum_transaction, "maximum-transaction")
+        self._ads_page.locator('input[placeholder*="3"], input[placeholder*="500"]').last.fill(
+            maximum_transaction,
+            timeout=self.READY_TIMEOUT_MS,
+        )
 
     def set_notes(self, window_title: str, notes: str) -> None:
-        self._fill_by_label_patterns(self._ads_page, [r"Примечания", r"Terms", r"Remarks"], notes, "notes")
+        self._ads_page.locator("textarea").first.fill(notes, timeout=self.READY_TIMEOUT_MS)
 
     def _fill_by_label_patterns(self, page: Any, labels: list[str], value: str, step_name: str) -> None:
         last_error: Exception | None = None
@@ -593,10 +640,37 @@ class PlaywrightBrowserDriver:
         if not wanted:
             return
         page = self._ads_page
-        self._click_label_or_role(page, "способами оплаты", step_name="open-payment-methods")
+        confirm = page.get_by_text(re.compile("Подтверд|Confirm", re.IGNORECASE)).last
+        if confirm.count() > 0 and confirm.is_visible() and confirm.is_enabled():
+            confirm.click(timeout=self.READY_TIMEOUT_MS)
+            return
+        if page.locator(".paymentItemNew").count() == 0:
+            self._click_label_or_role(page, "способами оплаты", step_name="open-payment-methods")
         for name in wanted:
-            self._set_checkbox_by_text(page, re.compile(re.escape(name), re.IGNORECASE), True)
-        self._click_label_or_role(page, "Подтверд", step_name="confirm-payment-methods")
+            item = page.locator(".paymentItemNew").filter(has_text=name).first
+            item.click(timeout=self.READY_TIMEOUT_MS)
+        confirm = page.get_by_text(re.compile("Подтверд|Confirm", re.IGNORECASE)).last
+        if confirm.count() > 0 and confirm.is_visible() and confirm.is_enabled():
+            confirm.click(timeout=self.READY_TIMEOUT_MS)
+
+    def _dismiss_payment_modal_if_open(self, page: Any) -> None:
+        has_payment_items = page.locator(".paymentItemNew").count() > 0
+        has_payment_modal_text = page.get_by_text(
+            re.compile("Управление способами оплаты|Manage Payment|Payment Method", re.IGNORECASE)
+        ).count() > 0
+        if not has_payment_items and not has_payment_modal_text:
+            return
+
+        confirm = page.get_by_text(re.compile("Подтверд|Confirm", re.IGNORECASE)).last
+        if confirm.count() > 0 and confirm.is_visible() and confirm.is_enabled():
+            confirm.click(timeout=self.READY_TIMEOUT_MS)
+            page.wait_for_timeout(300)
+            return
+
+        cancel = page.get_by_text(re.compile("Отмена|Cancel", re.IGNORECASE)).last
+        if cancel.count() > 0 and cancel.is_visible():
+            cancel.click(timeout=self.READY_TIMEOUT_MS)
+            page.wait_for_timeout(300)
 
     def _set_checkbox_by_text(self, page: Any, pattern: re.Pattern[str], checked: bool) -> None:
         checkbox = page.get_by_role("checkbox", name=pattern).first
@@ -607,16 +681,42 @@ class PlaywrightBrowserDriver:
 
     def accept_terms(self, window_title: str) -> None:
         page = self._ads_page
-        checkbox = page.get_by_role("checkbox", name=re.compile("прочитал|соглаша|agree", re.IGNORECASE)).first
-        checkbox.check(timeout=self.READY_TIMEOUT_MS)
+        checkbox = page.get_by_role("checkbox", name=re.compile("прочитал|соглаша|agree", re.IGNORECASE)).or_(
+            page.locator('input[type="checkbox"]')
+        ).first
+        try:
+            checkbox.check(timeout=2_000)
+        except Exception:
+            page.locator("label").filter(has_text=re.compile("прочитал|соглаша|agree", re.IGNORECASE)).first.click(
+                timeout=self.READY_TIMEOUT_MS
+            )
 
     def submit_advertisement(self, window_title: str) -> None:
         self._click_label_or_role(self._ads_page, "Разместить объявления", step_name="submit-advertisement")
 
     def enter_security_password(self, window_title: str, password: str) -> None:
         page = self._ads_page
-        self._fill_by_label_patterns(page, [r"Финансовый пароль", r"Fund Password"], password, "security-password")
+        self._fill_security_password_field(page, password)
         self._click_label_or_role(page, "Подтвердить", step_name="confirm-security-password")
+
+    def _fill_security_password_field(self, page: Any, password: str) -> None:
+        try:
+            self._fill_by_label_patterns(page, [r"Финансовый пароль", r"Fund Password"], password, "security-password")
+            return
+        except Exception as label_error:
+            last_error: Exception = label_error
+
+        fields = page.locator('input[type="password"]')
+        for index in range(fields.count()):
+            field = fields.nth(index)
+            try:
+                if field.is_visible():
+                    field.fill(password, timeout=self.READY_TIMEOUT_MS)
+                    return
+            except Exception as error:
+                last_error = error
+        self._save_failure_artifact(page, "security-password")
+        raise RuntimeError(f"Не найдено видимое поле финансового пароля. Последняя ошибка: {last_error}")
 
     def _click_label_or_role(self, page: Any, text: str, *, step_name: str) -> None:
         pattern = re.compile(re.escape(text), re.IGNORECASE)

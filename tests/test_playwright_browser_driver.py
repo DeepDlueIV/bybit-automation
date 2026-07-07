@@ -181,6 +181,29 @@ def test_select_sell_price_prefers_rub_price_over_limits(tmp_path) -> None:
     assert price == "79,87"
 
 
+def test_extract_merchant_candidates_from_bybit_split_lines(tmp_path) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    merchants = driver._extract_merchant_candidates(
+        "🎆\n"
+        "🎆UserTether🀄\n"
+        "866\xa0исполнено\n"
+        "|\n"
+        "100\xa0%\n"
+        "76,19 RUB\n"
+        "🩸bluora\n"
+        "432\xa0исполнено\n"
+        "76,19 RUB\n"
+    )
+
+    assert merchants == ["UserTether", "bluora"]
+
+
 def test_extract_advertisement_candidates_from_ads_text(tmp_path) -> None:
     driver = PlaywrightBrowserDriver(
         logger=AppLogger(),
@@ -198,6 +221,84 @@ def test_extract_advertisement_candidates_from_ads_text(tmp_path) -> None:
         "prices": ["79,87 RUB"],
         "created_at": ["2026-07-07 00:10:11"],
     }
+
+
+def test_extract_advertisement_snapshot_prefers_price_after_limits(tmp_path) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    snapshot = driver._extract_advertisement_snapshot_from_text(
+        "Покупка  USDT\n"
+        "2026-07-07 15:45:13\n"
+        "\t2074414418429661184\t\n"
+        "20 000\n"
+        "4000,00 - 3 500 000,00 RUB\n"
+        "\t\n"
+        "78,12 RUB\n"
+        "\t0%\n"
+        "Cash Deposit to Bank\n"
+        "Mobile Top-up\n"
+        "Bank Transfer\n"
+        "\tНа листинге"
+    )
+
+    assert snapshot is not None
+    assert snapshot.advertisement_id == "2074414418429661184"
+    assert snapshot.price == "78,12"
+    assert snapshot.side == "Покупка"
+    assert snapshot.created_at == "2026-07-07 15:45:13"
+
+
+def test_fill_security_password_falls_back_to_visible_password_input(tmp_path, monkeypatch) -> None:
+    class FakePasswordField:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def is_visible(self) -> bool:
+            return True
+
+        def fill(self, value: str, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.value = value
+
+    class FakePasswordInputs:
+        def __init__(self, field: FakePasswordField) -> None:
+            self.field = field
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> FakePasswordField:
+            assert index == 0
+            return self.field
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.field = FakePasswordField()
+
+        def get_by_label(self, *args, **kwargs):
+            raise RuntimeError("label is not attached")
+
+        def locator(self, selector: str) -> FakePasswordInputs:
+            assert selector == 'input[type="password"]'
+            return FakePasswordInputs(self.field)
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    monkeypatch.setattr(driver, "_save_failure_artifact", lambda page, step_name: None)
+
+    driver._fill_security_password_field(page, "secret")
+
+    assert page.field.value == "secret"
 
 
 def test_open_standard_p2p_ad_form_uses_python_locator_first_property(tmp_path, monkeypatch) -> None:

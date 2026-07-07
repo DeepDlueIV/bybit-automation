@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from threading import Thread
 
@@ -7,6 +8,10 @@ from threading import Thread
 BeepFunc = Callable[[int, int], None]
 SystemSoundFunc = Callable[[], None]
 PlaybackCallback = Callable[[str], None]
+
+
+def _running_under_pytest() -> bool:
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
 class AccountFoundSoundNotifier:
@@ -55,6 +60,8 @@ class AccountFoundSoundNotifier:
 
     @staticmethod
     def _default_system_sound() -> None:
+        if _running_under_pytest():
+            return
         try:
             import winsound
         except ImportError as error:
@@ -63,6 +70,8 @@ class AccountFoundSoundNotifier:
 
     @staticmethod
     def _default_beep(frequency: int, duration_ms: int) -> None:
+        if _running_under_pytest():
+            return
         try:
             import winsound
         except ImportError:
@@ -95,6 +104,8 @@ class ErrorSoundNotifier:
 
     @staticmethod
     def _default_beep(frequency: int, duration_ms: int) -> None:
+        if _running_under_pytest():
+            return
         try:
             import winsound
         except ImportError:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
@@ -29,6 +30,10 @@ def _describe_exception(error: Exception) -> str:
     if not message or message == "None":
         return repr(error)
     return message
+
+
+def _running_under_pytest() -> bool:
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
 class LogRelay(QObject):
@@ -179,6 +184,7 @@ class MainWindow(QMainWindow):
         self.browser_section.open_playwright_profile_button.clicked.connect(self.on_open_playwright_profile)
         self.browser_section.diagnose_sell_button.clicked.connect(self.on_diagnose_sell_page)
         self.browser_section.diagnose_ads_button.clicked.connect(self.on_diagnose_ads_page)
+        self.browser_section.open_ads_form_button.clicked.connect(self.on_open_ads_form)
         self.search_section.collect_merchants_button.clicked.connect(self.on_collect_merchants)
         self.search_section.find_account_button.clicked.connect(self.on_start_search)
         self.search_section.start_search_button.clicked.connect(self.on_start_cycle)
@@ -305,6 +311,18 @@ class MainWindow(QMainWindow):
             return
         self.status_bar.showMessage(f"Ads-диагностика сохранена: {path}")
 
+    def on_open_ads_form(self) -> None:
+        try:
+            opened = self._controller.open_ads_form_for_smoke_check(self.collect_state())
+        except (RuntimeError, KeyError) as error:
+            self._logger.info(_describe_exception(error))
+            self.status_bar.showMessage("Не удалось открыть форму Ads")
+            return
+        if opened:
+            self.status_bar.showMessage("Форма Ads открыта для безопасной проверки")
+        else:
+            self.status_bar.showMessage("Открытие формы Ads недоступно для выбранного режима")
+
     def on_start_search(self) -> None:
         state = self.collect_state()
         self._controller.find_my_account(state)
@@ -381,6 +399,8 @@ class MainWindow(QMainWindow):
         self.search_section.search_status_label.setText(message)
         self._logger.info(message)
         self.status_bar.showMessage("Цикл завершился с ошибкой")
+        if _running_under_pytest():
+            return
         self._error_sound_notifier.play()
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Critical)

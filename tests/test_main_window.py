@@ -131,6 +131,57 @@ def test_browser_section_has_open_playwright_profile_button(qtbot) -> None:
     assert section.open_playwright_profile_button.text() == "Открыть Playwright-профиль"
     assert section.diagnose_sell_button.text() == "Диагностика Sell"
     assert section.diagnose_ads_button.text() == "Диагностика Ads"
+    assert section.open_ads_form_button.text() == "Открыть форму Ads"
+
+
+def test_main_window_open_ads_form_button_triggers_controller_without_error_sound(qtbot, tmp_path: Path) -> None:
+    class FakeController(AppController):
+        def __init__(self) -> None:
+            super().__init__(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
+            self.called = False
+
+        def open_ads_form_for_smoke_check(self, state) -> bool:
+            self.called = True
+            return True
+
+    class FakeErrorSoundNotifier:
+        def __init__(self) -> None:
+            self.played = False
+
+        def play(self) -> None:
+            self.played = True
+
+    controller = FakeController()
+    notifier = FakeErrorSoundNotifier()
+    window = MainWindow(controller=controller, logger=controller._logger, error_sound_notifier=notifier)
+    qtbot.addWidget(window)
+
+    window.browser_section.open_ads_form_button.click()
+
+    assert controller.called is True
+    assert notifier.played is False
+
+
+def test_main_window_open_ads_form_error_does_not_play_error_sound(qtbot, tmp_path: Path) -> None:
+    class FakeController(AppController):
+        def open_ads_form_for_smoke_check(self, state) -> bool:
+            raise RuntimeError("manual click required")
+
+    class FakeErrorSoundNotifier:
+        def __init__(self) -> None:
+            self.played = False
+
+        def play(self) -> None:
+            self.played = True
+
+    controller = FakeController(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
+    notifier = FakeErrorSoundNotifier()
+    window = MainWindow(controller=controller, logger=controller._logger, error_sound_notifier=notifier)
+    qtbot.addWidget(window)
+
+    window.browser_section.open_ads_form_button.click()
+
+    assert notifier.played is False
 
 
 def test_browser_section_uses_compact_grid_without_inner_scroll(qtbot) -> None:

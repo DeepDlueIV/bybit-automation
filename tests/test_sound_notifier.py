@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bybit_automation.services import sound_notifier
 from bybit_automation.services.sound_notifier import AccountFoundSoundNotifier, ErrorSoundNotifier
 
 
@@ -58,3 +59,22 @@ def test_error_sound_notifier_sequence_is_shorter_than_two_seconds() -> None:
     total_ms = sum(duration for _, duration in notifier.sequence)
 
     assert total_ms <= 2000
+
+
+def test_default_sound_notifiers_do_not_call_winsound_under_pytest(monkeypatch) -> None:
+    class FailingWinSound:
+        MB_ICONEXCLAMATION = 48
+
+        @staticmethod
+        def MessageBeep(_kind: int) -> None:
+            raise AssertionError("winsound must stay silent under pytest")
+
+        @staticmethod
+        def Beep(_frequency: int, _duration: int) -> None:
+            raise AssertionError("winsound must stay silent under pytest")
+
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "test")
+    monkeypatch.setitem(__import__("sys").modules, "winsound", FailingWinSound)
+
+    sound_notifier.AccountFoundSoundNotifier(async_play=False).notify()
+    sound_notifier.ErrorSoundNotifier(async_play=False).play()

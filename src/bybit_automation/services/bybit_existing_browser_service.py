@@ -95,6 +95,17 @@ class BybitExistingBrowserService:
         self.logger.info(f"Ads-диагностика готова: {path}")
         return path
 
+    def open_ads_form_for_smoke_check(self, window_title: str) -> None:
+        window_title = window_title.strip()
+        if not window_title:
+            raise RuntimeError("Сначала нужно определить рабочее окно браузера.")
+        if not hasattr(self.driver, "open_standard_p2p_ad_form"):
+            raise RuntimeError("Выбранный браузерный режим не поддерживает открытие формы Ads.")
+        self.driver.focus(window_title)
+        self.logger.info("Открываю форму Ads для безопасной Playwright-проверки.")
+        self.driver.open_standard_p2p_ad_form(window_title)
+        self.logger.info("Форма объявления открыта для безопасной проверки.")
+
     def open_profile(self, window_title: str) -> None:
         self.logger.info("Открываю Playwright-профиль без запуска цикла.")
         self.driver.open_profile(window_title)
