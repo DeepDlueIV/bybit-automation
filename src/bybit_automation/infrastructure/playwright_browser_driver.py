@@ -128,6 +128,7 @@ class PlaywrightBrowserDriver:
             f"--user-data-dir={self._user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-extensions",
             "about:blank",
         ]
 
@@ -214,11 +215,13 @@ class PlaywrightBrowserDriver:
                 self._log(f"использую существующую вкладку {role}: {page.url}")
                 page.bring_to_front()
                 self._wait_for_domcontentloaded_best_effort(page, role=role)
+                self._dismiss_startup_useless_modal_if_open(page, role=role)
                 return page
         page = context.new_page()
         self._log(f"открываю вкладку {role}: {url}")
         page.goto(url, wait_until="commit", timeout=self.READY_TIMEOUT_MS)
         self._wait_for_domcontentloaded_best_effort(page, role=role)
+        self._dismiss_startup_useless_modal_if_open(page, role=role)
         return page
 
     def _same_base_url(self, current_url: str, target_url: str) -> bool:
@@ -323,7 +326,7 @@ class PlaywrightBrowserDriver:
     def diagnose_ads_page(self, window_title: str) -> Path:
         self.ensure_ads_tab(window_title)
         page = self._ads_page
-        text = self._body_text(page)
+        text = self._wait_for_ads_body_text(page)
         candidates = self._extract_advertisement_candidates(text)
         timestamp = int(time.time())
         self._artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -392,8 +395,18 @@ class PlaywrightBrowserDriver:
 
     def read_current_advertisement(self, window_title: str) -> AdvertisementSnapshot | None:
         self.ensure_ads_tab(window_title)
-        text = self._body_text(self._ads_page)
+        text = self._wait_for_ads_body_text(self._ads_page)
         return self._extract_advertisement_snapshot_from_text(text)
+
+    def _wait_for_ads_body_text(self, page: Any) -> str:
+        deadline = time.monotonic() + 45
+        last_text = ""
+        while time.monotonic() < deadline:
+            last_text = self._body_text(page)
+            if last_text.strip():
+                return last_text
+            time.sleep(0.3)
+        return last_text
 
     def _extract_advertisement_snapshot_from_text(self, text: str) -> AdvertisementSnapshot | None:
         advertisement_id = self._first_match(text, r"\b\d{10,}\b")
@@ -425,9 +438,9 @@ class PlaywrightBrowserDriver:
             return
         page = self._ads_page
         row = page.get_by_text(snapshot.advertisement_id, exact=True).locator("xpath=ancestor::*[@role='row' or self::tr][1]")
-        delete_button = row.get_by_role("button", name=re.compile("Удал|Delete", re.IGNORECASE)).last()
+        delete_button = row.get_by_role("button", name=re.compile("Удал|Delete", re.IGNORECASE)).last
         if delete_button.count() == 0:
-            delete_button = row.locator("button, [role=button]").last()
+            delete_button = self._find_icon_button_by_tooltip(page, re.compile("Удал|Delete", re.IGNORECASE))
         self._click_and_expect(
             page,
             lambda: delete_button.click(timeout=self.READY_TIMEOUT_MS),
@@ -444,13 +457,26 @@ class PlaywrightBrowserDriver:
             expected="строка объявления исчезла",
         )
 
+    def _find_icon_button_by_tooltip(self, page: Any, tooltip_pattern: re.Pattern[str]) -> Any:
+        buttons = page.locator(".moly-iconbutton")
+        for index in range(buttons.count()):
+            button = buttons.nth(index)
+            if not button.is_visible():
+                continue
+            button.hover(timeout=self.READY_TIMEOUT_MS)
+            page.wait_for_timeout(300)
+            body_text = page.locator("body").inner_text(timeout=self.READY_TIMEOUT_MS)
+            if tooltip_pattern.search(body_text):
+                return button
+        raise RuntimeError(f"Не найдена иконка с tooltip '{tooltip_pattern.pattern}'.")
+
     def collect_all_merchants(self, window_title: str, depth: int) -> list[str]:
         merchants: list[str] = []
         self.ensure_sell_tab(window_title)
         for page_number in range(1, depth + 1):
             if page_number > 1:
                 self._open_listing_page(self._sell_page, page_number)
-            merchants.extend(self._extract_merchant_candidates(self._body_text(self._sell_page)))
+            merchants.extend(self._wait_for_merchant_candidates(self._sell_page))
         return merchants
 
     def search_merchant(
@@ -469,7 +495,7 @@ class PlaywrightBrowserDriver:
             if page_number > 1:
                 on_progress(page_number, 0, f"Открываю страницу {page_number}")
                 self._open_listing_page(self._sell_page, page_number)
-            candidates = self._extract_merchant_candidates(self._body_text(self._sell_page))
+            candidates = self._wait_for_merchant_candidates(self._sell_page)
             for position, candidate in enumerate(candidates, start=1):
                 on_progress(page_number, position, f"Проверяю продавца {position}/10: {candidate}")
                 if self._normalize_merchant_name(candidate) == target:
@@ -478,6 +504,7 @@ class PlaywrightBrowserDriver:
         return MerchantSearchResult(found=False)
 
     def _open_listing_page(self, page: Any, page_number: int) -> None:
+        self._dismiss_sell_intro_modal_if_open(page)
         control = page.get_by_role("button", name=str(page_number)).or_(page.get_by_text(str(page_number), exact=True)).first
         self._click_and_expect(
             page,
@@ -486,6 +513,70 @@ class PlaywrightBrowserDriver:
             step_name=f"listing-page-{page_number}",
             expected=f"страница листинга {page_number} активна",
         )
+
+    def _dismiss_sell_intro_modal_if_open(self, page: Any) -> None:
+        dialog = page.get_by_role("dialog").filter(
+            has_text=re.compile("Начало работы с Bybit P2P|Getting started with Bybit P2P", re.IGNORECASE)
+        ).first
+        if dialog.count() == 0:
+            return
+        close_buttons = dialog.locator(
+            '[aria-label*="Close"], [aria-label*="close"], [aria-label*="Закры"], [class*="close"], [class*="Close"]'
+        )
+        if close_buttons.count() == 0:
+            return
+        close_buttons.first.click(timeout=self.READY_TIMEOUT_MS)
+        page.wait_for_timeout(300)
+        self._log("закрыл onboarding popup на Sell-странице перед пагинацией")
+
+    def _dismiss_startup_useless_modal_if_open(self, page: Any, *, role: str) -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                dialog = page.get_by_role("dialog").first
+                if dialog.count() == 0 or not self._locator_is_visible(dialog):
+                    page.wait_for_timeout(300)
+                    continue
+                text = dialog.inner_text(timeout=self.READY_TIMEOUT_MS)
+                if self._looks_like_critical_cycle_dialog(text):
+                    self._log(f"вкладка {role}: startup popup похож на рабочий диалог, не закрываю")
+                    return
+                close_buttons = dialog.locator(
+                    '[aria-label*="Close"], [aria-label*="close"], [aria-label*="Закры"], [class*="close"], [class*="Close"]'
+                )
+                if close_buttons.count() == 0:
+                    return
+                close_buttons.first.click(timeout=self.READY_TIMEOUT_MS)
+                page.wait_for_timeout(300)
+                self._log(f"вкладка {role}: закрыл стартовый бесполезный popup")
+                return
+            except Exception as error:
+                self._log(f"вкладка {role}: не удалось проверить стартовый popup, продолжаю: {error}")
+                return
+
+    def _locator_is_visible(self, locator: Any) -> bool:
+        try:
+            return bool(locator.is_visible())
+        except AttributeError:
+            return True
+
+    def _looks_like_critical_cycle_dialog(self, text: str) -> bool:
+        normalized = text.lower()
+        critical_parts = (
+            "финансовый пароль",
+            "fund password",
+            "подтверд",
+            "confirm",
+            "разместить объяв",
+            "post ad",
+            "стандартная p2p",
+            "standard p2p",
+            "способ",
+            "payment",
+            "удал",
+            "delete",
+        )
+        return any(part in normalized for part in critical_parts)
 
     def _extract_merchant_candidates(self, text: str) -> list[str]:
         candidates: list[str] = []
@@ -502,6 +593,16 @@ class PlaywrightBrowserDriver:
                 if name:
                     candidates.append(name)
         return candidates
+
+    def _wait_for_merchant_candidates(self, page: Any) -> list[str]:
+        deadline = time.monotonic() + 20
+        last_candidates: list[str] = []
+        while time.monotonic() < deadline:
+            last_candidates = self._extract_merchant_candidates(self._body_text(page))
+            if last_candidates:
+                return last_candidates
+            time.sleep(0.3)
+        return last_candidates
 
     def _merchant_name_before_stats(self, lines: list[str], stats_index: int) -> str:
         for candidate in reversed(lines[max(0, stats_index - 3) : stats_index]):
@@ -692,7 +793,52 @@ class PlaywrightBrowserDriver:
             )
 
     def submit_advertisement(self, window_title: str) -> None:
-        self._click_label_or_role(self._ads_page, "Разместить объявления", step_name="submit-advertisement")
+        page = self._ads_page
+        target = page.get_by_text("Разместить объявления", exact=True).last
+        self._click_and_expect(
+            page,
+            lambda: target.click(timeout=self.READY_TIMEOUT_MS),
+            lambda: self._wait_for_submit_next_step(page),
+            step_name="submit-advertisement",
+            expected="модалка финансового пароля или ошибка валидации после размещения",
+        )
+
+    def _wait_for_submit_next_step(self, page: Any) -> None:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if self._has_security_password_step(page):
+                return
+            body_text = self._body_text(page)
+            if self._has_submit_validation_error(page, body_text):
+                raise RuntimeError("После клика размещения Bybit показал ошибку/валидацию на форме.")
+            time.sleep(0.3)
+        self._save_failure_artifact(page, "submit-advertisement-next-step")
+        raise RuntimeError(
+            "После клика 'Разместить объявления' не появился следующий шаг. "
+            "Нужно вручную указать, какой элемент нажать или какое состояние ожидать."
+        )
+
+    def _has_security_password_step(self, page: Any) -> bool:
+        fields = page.locator('input[type="password"]')
+        for index in range(fields.count()):
+            try:
+                if fields.nth(index).is_visible():
+                    return True
+            except Exception:
+                continue
+        password_text = page.get_by_text(re.compile("Финансовый пароль|Fund Password", re.IGNORECASE)).first
+        return password_text.count() > 0 and password_text.is_visible()
+
+    def _has_submit_validation_error(self, page: Any, body_text: str) -> bool:
+        error_patterns = (
+            r"обязательн[а-я]*\s+пол",
+            r"заполните",
+            r"некорректн",
+            r"invalid",
+            r"required",
+            r"error",
+        )
+        return any(re.search(pattern, body_text, flags=re.IGNORECASE) for pattern in error_patterns)
 
     def enter_security_password(self, window_title: str, password: str) -> None:
         page = self._ads_page
