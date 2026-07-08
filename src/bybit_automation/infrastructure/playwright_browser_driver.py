@@ -216,16 +216,36 @@ class PlaywrightBrowserDriver:
                 page.bring_to_front()
                 self._wait_for_domcontentloaded_best_effort(page, role=role)
                 self._dismiss_startup_useless_modal_if_open(page, role=role)
+                if role == "Sell":
+                    self._dismiss_sell_intro_modal_if_open(page)
                 return page
+        cached_page = self._cached_page_for_role(role)
+        if cached_page is not None:
+            self._log(f"переиспользую вкладку {role} и открываю нужный адрес: {url}")
+            cached_page.goto(url, wait_until="commit", timeout=self.READY_TIMEOUT_MS)
+            self._wait_for_domcontentloaded_best_effort(cached_page, role=role)
+            self._dismiss_startup_useless_modal_if_open(cached_page, role=role)
+            if role == "Sell":
+                self._dismiss_sell_intro_modal_if_open(cached_page)
+            return cached_page
         page = context.new_page()
         self._log(f"открываю вкладку {role}: {url}")
         page.goto(url, wait_until="commit", timeout=self.READY_TIMEOUT_MS)
         self._wait_for_domcontentloaded_best_effort(page, role=role)
         self._dismiss_startup_useless_modal_if_open(page, role=role)
+        if role == "Sell":
+            self._dismiss_sell_intro_modal_if_open(page)
         return page
 
     def _same_base_url(self, current_url: str, target_url: str) -> bool:
         return current_url.split("?", 1)[0].rstrip("/") == target_url.rstrip("/")
+
+    def _cached_page_for_role(self, role: str) -> Any | None:
+        if role == "Ads":
+            return self._ads_page
+        if role == "Sell":
+            return self._sell_page
+        return None
 
     def _wait_for_domcontentloaded_best_effort(self, page: Any, *, role: str) -> None:
         try:
@@ -260,21 +280,59 @@ class PlaywrightBrowserDriver:
             click_action()
             expect_action()
         except Exception as error:
+            self._log_click_failure_context(page, step_name)
             self._save_failure_artifact(page, step_name)
             raise RuntimeError(f"Шаг '{step_name}' не подтвердился: ожидалось '{expected}'. Причина: {error}") from error
+
+    def _log_click_failure_context(self, page: Any, step_name: str) -> None:
+        try:
+            url = page.url
+        except Exception as error:
+            url = f"<не удалось прочитать URL: {error}>"
+        try:
+            buttons = page.locator('button, [role="button"]').evaluate_all(
+                "els => els.filter(el => el.offsetParent !== null)"
+                ".map(el => (el.innerText || el.getAttribute('aria-label') || '').trim())"
+                ".filter(Boolean).slice(0, 20)"
+            )
+        except Exception as error:
+            buttons = [f"<не удалось прочитать кнопки: {error}>"]
+        try:
+            body_text = page.locator("body").inner_text(timeout=self.READY_TIMEOUT_MS)
+            body_text = re.sub(r"\s+", " ", body_text).strip()[:500]
+        except Exception as error:
+            body_text = f"<не удалось прочитать текст страницы: {error}>"
+        self._log(
+            f"диагностика сбоя '{step_name}': url={url}; "
+            f"buttons={buttons}; body='{body_text}'"
+        )
 
     def focus(self, window_title: str) -> None:
         self._ensure_context()
 
     def ensure_sell_tab(self, window_title: str) -> None:
+        if self._cached_page_matches(self._sell_page, self.SELL_URL):
+            return
         self._sell_page = self._page_for_url(self.SELL_URL, role="Sell")
 
     def ensure_ads_tab(self, window_title: str) -> None:
+        if self._cached_page_matches(self._ads_page, self.ADS_URL):
+            return
         self._ads_page = self._page_for_url(self.ADS_URL, role="Ads")
+
+    def _cached_page_matches(self, page: Any | None, url: str) -> bool:
+        if page is None:
+            return False
+        try:
+            return self._same_base_url(page.url, url)
+        except Exception:
+            return False
 
     def refresh_page(self, window_title: str) -> None:
         page = self._sell_page or self._page_for_url(self.SELL_URL, role="Sell")
         page.reload(wait_until="domcontentloaded", timeout=self.READY_TIMEOUT_MS)
+        self._dismiss_startup_useless_modal_if_open(page, role="Sell")
+        self._dismiss_sell_intro_modal_if_open(page)
 
     def read_current_sell_price(self, window_title: str) -> str:
         self.ensure_sell_tab(window_title)
@@ -440,7 +498,11 @@ class PlaywrightBrowserDriver:
         row = page.get_by_text(snapshot.advertisement_id, exact=True).locator("xpath=ancestor::*[@role='row' or self::tr][1]")
         delete_button = row.get_by_role("button", name=re.compile("Удал|Delete", re.IGNORECASE)).last
         if delete_button.count() == 0:
-            delete_button = self._find_icon_button_by_tooltip(page, re.compile("Удал|Delete", re.IGNORECASE))
+            delete_button = self._find_icon_button_by_tooltip(
+                page,
+                re.compile("Удал|Delete", re.IGNORECASE),
+                root=row,
+            )
         self._click_and_expect(
             page,
             lambda: delete_button.click(timeout=self.READY_TIMEOUT_MS),
@@ -457,26 +519,45 @@ class PlaywrightBrowserDriver:
             expected="строка объявления исчезла",
         )
 
-    def _find_icon_button_by_tooltip(self, page: Any, tooltip_pattern: re.Pattern[str]) -> Any:
-        buttons = page.locator(".moly-iconbutton")
-        for index in range(buttons.count()):
-            button = buttons.nth(index)
-            if not button.is_visible():
-                continue
-            button.hover(timeout=self.READY_TIMEOUT_MS)
-            page.wait_for_timeout(300)
-            body_text = page.locator("body").inner_text(timeout=self.READY_TIMEOUT_MS)
-            if tooltip_pattern.search(body_text):
-                return button
+    def _find_icon_button_by_tooltip(
+        self,
+        page: Any,
+        tooltip_pattern: re.Pattern[str],
+        *,
+        root: Any | None = None,
+    ) -> Any:
+        search_root = root if root is not None else page
+        selectors = [
+            ".moly-iconbutton",
+            'button, [role="button"], [aria-label], [class*="icon"], [class*="Icon"]',
+        ]
+        for selector in selectors:
+            buttons = search_root.locator(selector)
+            for index in range(buttons.count()):
+                button = buttons.nth(index)
+                if not button.is_visible():
+                    continue
+                button.hover(timeout=self.READY_TIMEOUT_MS)
+                page.wait_for_timeout(300)
+                body_text = page.locator("body").inner_text(timeout=self.READY_TIMEOUT_MS)
+                if tooltip_pattern.search(body_text):
+                    return button
         raise RuntimeError(f"Не найдена иконка с tooltip '{tooltip_pattern.pattern}'.")
 
     def collect_all_merchants(self, window_title: str, depth: int) -> list[str]:
         merchants: list[str] = []
         self.ensure_sell_tab(window_title)
+        self._open_listing_page(self._sell_page, 1)
+        previous_candidates: list[str] | None = None
         for page_number in range(1, depth + 1):
             if page_number > 1:
                 self._open_listing_page(self._sell_page, page_number)
-            merchants.extend(self._wait_for_merchant_candidates(self._sell_page))
+            candidates = self._wait_for_merchant_candidates(
+                self._sell_page,
+                previous_candidates=previous_candidates,
+            )
+            merchants.extend(candidates)
+            previous_candidates = candidates
         return merchants
 
     def search_merchant(
@@ -489,18 +570,24 @@ class PlaywrightBrowserDriver:
     ) -> MerchantSearchResult:
         target = self._normalize_merchant_name(account_name)
         self.ensure_sell_tab(window_title)
+        self._open_listing_page(self._sell_page, 1)
+        previous_candidates: list[str] | None = None
         for page_number in range(1, depth + 1):
             if stop_requested():
                 return MerchantSearchResult(found=False)
             if page_number > 1:
                 on_progress(page_number, 0, f"Открываю страницу {page_number}")
                 self._open_listing_page(self._sell_page, page_number)
-            candidates = self._wait_for_merchant_candidates(self._sell_page)
+            candidates = self._wait_for_merchant_candidates(
+                self._sell_page,
+                previous_candidates=previous_candidates,
+            )
             for position, candidate in enumerate(candidates, start=1):
                 on_progress(page_number, position, f"Проверяю продавца {position}/10: {candidate}")
                 if self._normalize_merchant_name(candidate) == target:
                     on_progress(page_number, position, "Найден")
                     return MerchantSearchResult(found=True, page=page_number, position=position, matched_name=candidate)
+            previous_candidates = candidates
         return MerchantSearchResult(found=False)
 
     def _open_listing_page(self, page: Any, page_number: int) -> None:
@@ -516,17 +603,36 @@ class PlaywrightBrowserDriver:
 
     def _dismiss_sell_intro_modal_if_open(self, page: Any) -> None:
         dialog = page.get_by_role("dialog").filter(
-            has_text=re.compile("Начало работы с Bybit P2P|Getting started with Bybit P2P", re.IGNORECASE)
+            has_text=re.compile("Bybit P2P|Начало работы с Bybit P2P|Getting started with Bybit P2P", re.IGNORECASE)
         ).first
         if dialog.count() == 0:
             return
+        clicked = False
+        skip_button = dialog.get_by_role(
+            "button",
+            name=re.compile("Пропустить|Skip|Закрыть|Close", re.IGNORECASE),
+        ).first
+        if skip_button.count() > 0:
+            skip_button.click(timeout=self.READY_TIMEOUT_MS)
+            clicked = True
         close_buttons = dialog.locator(
             '[aria-label*="Close"], [aria-label*="close"], [aria-label*="Закры"], [class*="close"], [class*="Close"]'
         )
-        if close_buttons.count() == 0:
+        if not clicked and close_buttons.count() > 0:
+            close_buttons.first.click(timeout=self.READY_TIMEOUT_MS)
+            clicked = True
+        if not clicked:
             return
-        close_buttons.first.click(timeout=self.READY_TIMEOUT_MS)
         page.wait_for_timeout(300)
+        if dialog.count() > 0 and self._locator_is_visible(dialog):
+            buttons = dialog.locator("button")
+            if buttons.count() == 0:
+                return
+            buttons.last.click(timeout=self.READY_TIMEOUT_MS)
+            page.wait_for_timeout(300)
+        if dialog.count() > 0 and self._locator_is_visible(dialog):
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
         self._log("закрыл onboarding popup на Sell-странице перед пагинацией")
 
     def _dismiss_startup_useless_modal_if_open(self, page: Any, *, role: str) -> None:
@@ -565,14 +671,10 @@ class PlaywrightBrowserDriver:
         critical_parts = (
             "финансовый пароль",
             "fund password",
-            "подтверд",
-            "confirm",
             "разместить объяв",
             "post ad",
             "стандартная p2p",
             "standard p2p",
-            "способ",
-            "payment",
             "удал",
             "delete",
         )
@@ -594,15 +696,24 @@ class PlaywrightBrowserDriver:
                     candidates.append(name)
         return candidates
 
-    def _wait_for_merchant_candidates(self, page: Any) -> list[str]:
+    def _wait_for_merchant_candidates(
+        self,
+        page: Any,
+        *,
+        previous_candidates: list[str] | None = None,
+    ) -> list[str]:
         deadline = time.monotonic() + 20
         last_candidates: list[str] = []
+        previous_normalized = self._normalize_merchant_candidates(previous_candidates or [])
         while time.monotonic() < deadline:
             last_candidates = self._extract_merchant_candidates(self._body_text(page))
-            if last_candidates:
+            if last_candidates and self._normalize_merchant_candidates(last_candidates) != previous_normalized:
                 return last_candidates
             time.sleep(0.3)
         return last_candidates
+
+    def _normalize_merchant_candidates(self, candidates: list[str]) -> list[str]:
+        return [self._normalize_merchant_name(candidate) for candidate in candidates]
 
     def _merchant_name_before_stats(self, lines: list[str], stats_index: int) -> str:
         for candidate in reversed(lines[max(0, stats_index - 3) : stats_index]):
@@ -694,15 +805,19 @@ class PlaywrightBrowserDriver:
         )
 
     def set_minimum_transaction(self, window_title: str, minimum_transaction: str) -> None:
-        self._ads_page.locator('input[placeholder="500"]').first.fill(
+        self._fill_input_after_text_patterns(
+            self._ads_page,
+            ["Мин. сумма транзакции", "Min. transaction", "Minimum transaction"],
             minimum_transaction,
-            timeout=self.READY_TIMEOUT_MS,
+            step_name="fill-minimum-transaction",
         )
 
     def set_maximum_transaction(self, window_title: str, maximum_transaction: str) -> None:
-        self._ads_page.locator('input[placeholder*="3"], input[placeholder*="500"]').last.fill(
+        self._fill_input_after_text_patterns(
+            self._ads_page,
+            ["Макс. сумма транзакции", "Max. transaction", "Maximum transaction"],
             maximum_transaction,
-            timeout=self.READY_TIMEOUT_MS,
+            step_name="fill-maximum-transaction",
         )
 
     def set_notes(self, window_title: str, notes: str) -> None:
@@ -713,6 +828,20 @@ class PlaywrightBrowserDriver:
         for label in labels:
             try:
                 field = page.get_by_label(re.compile(label, re.IGNORECASE)).first
+                field.fill(value, timeout=self.READY_TIMEOUT_MS)
+                return
+            except Exception as error:
+                last_error = error
+        self._save_failure_artifact(page, step_name)
+        raise RuntimeError(f"Не найдено поле для шага '{step_name}'. Последняя ошибка: {last_error}")
+
+    def _fill_input_after_text_patterns(self, page: Any, texts: list[str], value: str, step_name: str) -> None:
+        last_error: Exception | None = None
+        for text in texts:
+            try:
+                field = page.locator(
+                    f'xpath=//*[text()[contains(normalize-space(.), "{text}")]]/following::input[1]'
+                ).first
                 field.fill(value, timeout=self.READY_TIMEOUT_MS)
                 return
             except Exception as error:
@@ -843,15 +972,32 @@ class PlaywrightBrowserDriver:
     def enter_security_password(self, window_title: str, password: str) -> None:
         page = self._ads_page
         self._fill_security_password_field(page, password)
-        self._click_label_or_role(page, "Подтвердить", step_name="confirm-security-password")
+        self._confirm_security_password(page)
+
+    def _confirm_security_password(self, page: Any) -> None:
+        pattern = re.compile("Подтвердить|Confirm", re.IGNORECASE)
+        target = page.get_by_role("button", name=pattern).or_(page.get_by_text(pattern)).first
+        self._click_and_expect(
+            page,
+            lambda: target.click(timeout=self.READY_TIMEOUT_MS),
+            lambda: self._wait_for_security_password_result(page),
+            step_name="confirm-security-password",
+            expected="диалог финансового пароля закрылся или появилось подтверждение создания",
+        )
+
+    def _wait_for_security_password_result(self, page: Any) -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if not self._has_security_password_step(page):
+                return
+            if page.get_by_text(re.compile("Create Success|Создано|Успеш", re.IGNORECASE)).first.count() > 0:
+                return
+            time.sleep(0.2)
+        self._save_failure_artifact(page, "confirm-security-password-result")
+        raise RuntimeError("После подтверждения финансового пароля диалог не закрылся за 5 секунд.")
 
     def _fill_security_password_field(self, page: Any, password: str) -> None:
-        try:
-            self._fill_by_label_patterns(page, [r"Финансовый пароль", r"Fund Password"], password, "security-password")
-            return
-        except Exception as label_error:
-            last_error: Exception = label_error
-
+        last_error: Exception | None = None
         fields = page.locator('input[type="password"]')
         for index in range(fields.count()):
             field = fields.nth(index)
@@ -861,6 +1007,11 @@ class PlaywrightBrowserDriver:
                     return
             except Exception as error:
                 last_error = error
+        try:
+            self._fill_by_label_patterns(page, [r"Финансовый пароль", r"Fund Password"], password, "security-password")
+            return
+        except Exception as label_error:
+            last_error = label_error
         self._save_failure_artifact(page, "security-password")
         raise RuntimeError(f"Не найдено видимое поле финансового пароля. Последняя ошибка: {last_error}")
 

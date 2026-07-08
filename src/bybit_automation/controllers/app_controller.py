@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -215,11 +216,14 @@ class AppController:
         return True
 
     def _find_merchant_position(self, merchants: list[str], account_name: str) -> int:
-        target = account_name.strip().lower()
+        target = self._normalize_merchant_name(account_name)
         for index, merchant in enumerate(merchants, start=1):
-            if merchant.strip().lower() == target:
+            if self._normalize_merchant_name(merchant) == target:
                 return index
         return 0
+
+    def _normalize_merchant_name(self, text: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s.-]+", " ", text, flags=re.UNICODE)).strip().lower()
 
     def _append_found_account_from_cycle(self, account_name: str, position: int, snapshot) -> None:
         found_file = self._app_paths.found_accounts_file

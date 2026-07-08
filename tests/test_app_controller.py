@@ -401,6 +401,14 @@ def test_find_my_account_records_advertisement_created_at_and_notifies_after_suc
     assert notifier.calls == 1
 
 
+def test_find_merchant_position_uses_same_normalization_as_browser_driver(tmp_path: Path) -> None:
+    controller = AppController(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
+
+    position = controller._find_merchant_position(["Alpha", "🎆 Mannequin 🀄", "Omega"], "Mannequin")
+
+    assert position == 2
+
+
 def test_find_my_account_notifies_for_position_outside_top_10_after_successful_write(
     tmp_path: Path, monkeypatch
 ) -> None:

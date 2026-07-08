@@ -244,8 +244,8 @@ class BybitExistingBrowserService:
         started = self.fill_advertisement_form(state)
         if not started:
             raise RuntimeError("Не удалось начать создание объявления.")
-        self.logger.info("После ввода пароля не жду появления объявления на Ads: Bybit сам обновит страницу.")
-        return None
+        self.logger.info("Жду появления созданного объявления на Ads перед сбором мерчантов.")
+        return self._wait_for_created_advertisement(state.browser.window_title)
 
     def search_merchant(
         self,

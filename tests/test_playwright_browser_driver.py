@@ -6,6 +6,7 @@ import pytest
 
 from bybit_automation.infrastructure.playwright_browser_driver import PlaywrightBrowserDriver
 from bybit_automation.models.automation_mode import AutomationMode
+from bybit_automation.models.merchant_cycle import AdvertisementSnapshot
 from bybit_automation.services.logging_service import AppLogger
 
 
@@ -240,6 +241,40 @@ def test_wait_for_merchant_candidates_retries_until_seller_list_renders(tmp_path
     assert merchants == ["UserTether"]
 
 
+def test_wait_for_merchant_candidates_can_wait_for_page_content_change(tmp_path, monkeypatch) -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.texts = [
+                "OldSeller\n100 исполнено\n100 %\n79,90 RUB",
+                "OldSeller\n100 исполнено\n100 %\n79,90 RUB",
+                "Mannequin\n11 исполнено\n91 %\n79,84 RUB",
+            ]
+
+        def wait_for_load_state(self, state: str, timeout: int) -> None:
+            assert state == "domcontentloaded"
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+
+        def locator(self, selector: str):
+            assert selector == "body"
+            return self
+
+        def inner_text(self, timeout: int) -> str:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            return self.texts.pop(0)
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    monkeypatch.setattr("bybit_automation.infrastructure.playwright_browser_driver.time.sleep", lambda seconds: None)
+
+    merchants = driver._wait_for_merchant_candidates(FakePage(), previous_candidates=["OldSeller"])
+
+    assert merchants == ["Mannequin"]
+
+
 def test_extract_advertisement_candidates_from_ads_text(tmp_path) -> None:
     driver = PlaywrightBrowserDriver(
         logger=AppLogger(),
@@ -340,11 +375,12 @@ def test_dismiss_sell_intro_modal_clicks_dialog_close_button(tmp_path) -> None:
             self.clicked = True
 
     class FakeButtons:
-        def __init__(self, close_button: FakeCloseButton) -> None:
-            self.first = close_button
+        def __init__(self, close_button: FakeCloseButton | None = None) -> None:
+            self.first = close_button or self
+            self._close_button = close_button
 
         def count(self) -> int:
-            return 1
+            return 1 if self._close_button is not None else 0
 
     class FakeDialog:
         def __init__(self, close_button: FakeCloseButton) -> None:
@@ -362,6 +398,13 @@ def test_dismiss_sell_intro_modal_clicks_dialog_close_button(tmp_path) -> None:
             assert "aria-label" in selector
             assert selector.strip() != "button"
             return FakeButtons(self.close_button)
+
+        def get_by_role(self, role: str, **kwargs) -> FakeButtons:
+            assert role == "button"
+            return FakeButtons()
+
+        def is_visible(self) -> bool:
+            return not self.close_button.clicked
 
     class FakePage:
         def __init__(self) -> None:
@@ -388,6 +431,257 @@ def test_dismiss_sell_intro_modal_clicks_dialog_close_button(tmp_path) -> None:
 
     assert fake_page.close_button.clicked is True
     assert fake_page.waited is True
+
+
+def test_dismiss_sell_intro_modal_clicks_skip_button_when_no_close_icon(tmp_path) -> None:
+    class FakeButton:
+        def __init__(self, on_click=None) -> None:
+            self.clicked = False
+            self._on_click = on_click
+
+        def click(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.clicked = True
+            if self._on_click is not None:
+                self._on_click()
+
+    class FakeButtons:
+        def __init__(self, button: FakeButton | None = None) -> None:
+            self.first = self
+            self._button = button
+
+        def count(self) -> int:
+            return 1 if self._button is not None else 0
+
+        def click(self, timeout: int) -> None:
+            assert self._button is not None
+            self._button.click(timeout)
+
+    class FakeDialog:
+        def __init__(self) -> None:
+            self.first = self
+            self.closed = False
+            self.skip = FakeButton(lambda: setattr(self, "closed", True))
+
+        def filter(self, **kwargs):
+            return self
+
+        def count(self) -> int:
+            return 1
+
+        def locator(self, selector: str):
+            assert "close" in selector or "Close" in selector
+            return FakeButtons()
+
+        def get_by_role(self, role: str, **kwargs):
+            assert role == "button"
+            return FakeButtons(self.skip)
+
+        def is_visible(self) -> bool:
+            return not self.closed
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.dialog = FakeDialog()
+            self.waited = False
+
+        def get_by_role(self, role: str):
+            assert role == "dialog"
+            return self.dialog
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            assert milliseconds == 300
+            self.waited = True
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    fake_page = FakePage()
+
+    driver._dismiss_sell_intro_modal_if_open(fake_page)
+
+    assert fake_page.dialog.skip.clicked is True
+    assert fake_page.waited is True
+
+
+def test_ensure_sell_tab_dismisses_intro_modal_on_page_entry(tmp_path, monkeypatch) -> None:
+    class FakePage:
+        url = PlaywrightBrowserDriver.SELL_URL
+
+        def __init__(self) -> None:
+            self.dismissed = False
+
+        def bring_to_front(self) -> None:
+            pass
+
+        def wait_for_load_state(self, state: str, timeout: int) -> None:
+            assert state == "domcontentloaded"
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.pages = [FakePage()]
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    context = FakeContext()
+    monkeypatch.setattr(driver, "_ensure_context", lambda: context)
+    monkeypatch.setattr(driver, "_dismiss_startup_useless_modal_if_open", lambda page, role: None)
+    monkeypatch.setattr(driver, "_dismiss_sell_intro_modal_if_open", lambda page: setattr(page, "dismissed", True))
+
+    driver.ensure_sell_tab("Playwright profile")
+
+    assert context.pages[0].dismissed is True
+
+
+def test_refresh_page_dismisses_sell_intro_modal(tmp_path, monkeypatch) -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.dismissed = False
+
+        def reload(self, *, wait_until: str, timeout: int) -> None:
+            assert wait_until == "domcontentloaded"
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._sell_page = page
+    monkeypatch.setattr(driver, "_dismiss_sell_intro_modal_if_open", lambda page: setattr(page, "dismissed", True))
+
+    driver.refresh_page("Playwright profile")
+
+    assert page.dismissed is True
+
+
+def test_ensure_ads_tab_reuses_cached_page_without_startup_modal_probe(tmp_path, monkeypatch) -> None:
+    class FakePage:
+        url = PlaywrightBrowserDriver.ADS_URL
+
+        def __init__(self) -> None:
+            self.brought_to_front = False
+
+        def bring_to_front(self) -> None:
+            self.brought_to_front = True
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._ads_page = page
+    monkeypatch.setattr(driver, "_ensure_context", lambda: (_ for _ in ()).throw(AssertionError("cached page is enough")))
+    monkeypatch.setattr(
+        driver,
+        "_dismiss_startup_useless_modal_if_open",
+        lambda page, role: (_ for _ in ()).throw(AssertionError("startup probe should not repeat for cached page")),
+    )
+
+    driver.ensure_ads_tab("Playwright profile")
+
+    assert driver._ads_page is page
+    assert page.brought_to_front is False
+
+
+def test_page_for_url_navigates_cached_ads_page_instead_of_opening_duplicate_tab(tmp_path, monkeypatch) -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.url = "https://www.bybit.com/ru-RU/p2p/merchant-admin/ads/create"
+            self.navigated_to = ""
+
+        def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+            assert wait_until == "commit"
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.navigated_to = url
+            self.url = url
+
+    class FakeContext:
+        pages: list[FakePage] = []
+
+        def new_page(self):
+            raise AssertionError("must not open a duplicate Ads tab")
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._ads_page = page
+    monkeypatch.setattr(driver, "_ensure_context", lambda: FakeContext())
+    monkeypatch.setattr(driver, "_wait_for_domcontentloaded_best_effort", lambda page, role: None)
+    monkeypatch.setattr(driver, "_dismiss_startup_useless_modal_if_open", lambda page, role: None)
+
+    result = driver._page_for_url(PlaywrightBrowserDriver.ADS_URL, role="Ads")
+
+    assert result is page
+    assert page.navigated_to == PlaywrightBrowserDriver.ADS_URL
+
+
+def test_ensure_sell_tab_navigates_cached_buy_page_back_to_sell(tmp_path, monkeypatch) -> None:
+    class FakePage:
+        def __init__(self) -> None:
+            self.url = "https://www.bybit.com/ru-RU/p2p/buy/USDT/RUB"
+            self.navigated_to = ""
+
+        def goto(self, url: str, *, wait_until: str, timeout: int) -> None:
+            assert wait_until == "commit"
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.navigated_to = url
+            self.url = url
+
+    class FakeContext:
+        pages: list[FakePage] = []
+
+        def new_page(self):
+            raise AssertionError("must reuse cached Sell tab instead of opening a duplicate")
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._sell_page = page
+    monkeypatch.setattr(driver, "_ensure_context", lambda: FakeContext())
+    monkeypatch.setattr(driver, "_wait_for_domcontentloaded_best_effort", lambda page, role: None)
+    monkeypatch.setattr(driver, "_dismiss_startup_useless_modal_if_open", lambda page, role: None)
+    monkeypatch.setattr(driver, "_dismiss_sell_intro_modal_if_open", lambda page: None)
+
+    driver.ensure_sell_tab("Playwright profile")
+
+    assert driver._sell_page is page
+    assert page.navigated_to == PlaywrightBrowserDriver.SELL_URL
+
+
+def test_onboarding_intro_text_is_not_treated_as_critical_dialog(tmp_path) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    assert not driver._looks_like_critical_cycle_dialog(
+        "Начало работы с Bybit P2P Покупайте криптовалюту у других пользователей "
+        "Выберите предпочитаемую валюту, криптовалюту и P2P-объявление. "
+        "Убедитесь, что мейкер принимает выбранный способ оплаты. Торговать"
+    )
 
 
 def test_dismiss_startup_useless_modal_clicks_dialog_close_button(tmp_path) -> None:
@@ -526,8 +820,10 @@ def test_fill_security_password_falls_back_to_visible_password_input(tmp_path, m
     class FakePage:
         def __init__(self) -> None:
             self.field = FakePasswordField()
+            self.label_lookups = 0
 
         def get_by_label(self, *args, **kwargs):
+            self.label_lookups += 1
             raise RuntimeError("label is not attached")
 
         def locator(self, selector: str) -> FakePasswordInputs:
@@ -546,6 +842,66 @@ def test_fill_security_password_falls_back_to_visible_password_input(tmp_path, m
     driver._fill_security_password_field(page, "secret")
 
     assert page.field.value == "secret"
+    assert page.label_lookups == 0
+
+
+def test_enter_security_password_does_not_wait_for_page_load_after_confirm(tmp_path, monkeypatch) -> None:
+    class FakeConfirmButton:
+        def __init__(self) -> None:
+            self.first = self
+            self.clicked = False
+
+        def or_(self, other):
+            return self
+
+        def click(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.clicked = True
+
+    class FakePasswordDialog:
+        def __init__(self) -> None:
+            self.first = self
+
+        def count(self) -> int:
+            return 0
+
+        def is_visible(self) -> bool:
+            return False
+
+        def nth(self, index: int):
+            raise AssertionError("no password fields should be inspected when count is zero")
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.confirm = FakeConfirmButton()
+
+        def get_by_role(self, role: str, **kwargs):
+            assert role == "button"
+            return self.confirm
+
+        def get_by_text(self, *args, **kwargs):
+            return FakePasswordDialog()
+
+        def locator(self, selector: str):
+            assert selector == 'input[type="password"]'
+            return FakePasswordDialog()
+
+        def wait_for_load_state(self, *args, **kwargs) -> None:
+            raise AssertionError("confirming financial password must not wait for page load")
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._ads_page = page
+    monkeypatch.setattr(driver, "_fill_security_password_field", lambda page, password: None)
+
+    driver.enter_security_password("Playwright profile", "secret")
+
+    assert page.confirm.clicked is True
 
 
 def test_open_standard_p2p_ad_form_uses_python_locator_first_property(tmp_path, monkeypatch) -> None:
@@ -631,6 +987,47 @@ def test_submit_advertisement_waits_for_security_password_dialog(tmp_path, monke
     monkeypatch.setattr("bybit_automation.infrastructure.playwright_browser_driver.time.sleep", lambda seconds: None)
 
     driver.submit_advertisement("Playwright profile")
+
+
+def test_transaction_limits_are_filled_by_label_not_placeholder(tmp_path) -> None:
+    class FakeInput:
+        def __init__(self) -> None:
+            self.first = self
+            self.value = ""
+
+        def fill(self, value: str, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.value = value
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.minimum = FakeInput()
+            self.maximum = FakeInput()
+            self.selectors: list[str] = []
+
+        def locator(self, selector: str):
+            self.selectors.append(selector)
+            if "Мин. сумма транзакции" in selector:
+                return self.minimum
+            if "Макс. сумма транзакции" in selector:
+                return self.maximum
+            raise AssertionError(f"unexpected selector: {selector}")
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._ads_page = page
+
+    driver.set_minimum_transaction("Playwright profile", "5000")
+    driver.set_maximum_transaction("Playwright profile", "3500000")
+
+    assert page.minimum.value == "5000"
+    assert page.maximum.value == "3500000"
+    assert all('placeholder="500"' not in selector for selector in page.selectors)
 
 
 def test_submit_advertisement_clicks_last_exact_submit_text_not_header(tmp_path, monkeypatch) -> None:
@@ -920,3 +1317,195 @@ def test_find_icon_button_by_tooltip_clicks_only_after_matching_tooltip(tmp_path
     result.click(timeout=PlaywrightBrowserDriver.READY_TIMEOUT_MS)
     assert page.buttons[0].clicked is False
     assert page.buttons[1].clicked is True
+
+
+def test_find_icon_button_by_tooltip_falls_back_to_role_buttons(tmp_path) -> None:
+    class FakeButton:
+        def __init__(self, page: FakePage, tooltip: str) -> None:
+            self._page = page
+            self._tooltip = tooltip
+            self.clicked = False
+
+        def hover(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self._page.tooltip = self._tooltip
+
+        def click(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.clicked = True
+
+        def is_visible(self) -> bool:
+            return True
+
+    class FakeButtons:
+        def __init__(self, buttons: list[FakeButton]) -> None:
+            self._buttons = buttons
+
+        def count(self) -> int:
+            return len(self._buttons)
+
+        def nth(self, index: int) -> FakeButton:
+            return self._buttons[index]
+
+    class FakeBody:
+        def __init__(self, page: FakePage) -> None:
+            self._page = page
+
+        def inner_text(self, timeout: int) -> str:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            return self._page.tooltip
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.tooltip = ""
+            self.buttons = [FakeButton(self, "Редактировать"), FakeButton(self, "Удалить")]
+            self.selectors: list[str] = []
+
+        def locator(self, selector: str):
+            self.selectors.append(selector)
+            if selector == ".moly-iconbutton":
+                return FakeButtons([])
+            if selector == 'button, [role="button"], [aria-label], [class*="icon"], [class*="Icon"]':
+                return FakeButtons(self.buttons)
+            if selector == "body":
+                return FakeBody(self)
+            raise AssertionError(selector)
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            assert milliseconds == 300
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+
+    result = driver._find_icon_button_by_tooltip(page, re.compile("Удалить", re.IGNORECASE))
+
+    result.click(timeout=PlaywrightBrowserDriver.READY_TIMEOUT_MS)
+    assert page.buttons[0].clicked is False
+    assert page.buttons[1].clicked is True
+
+
+def test_delete_current_advertisement_scopes_tooltip_icon_search_to_ad_row(tmp_path, monkeypatch) -> None:
+    class FakeButton:
+        def __init__(self, page: FakePage, tooltip: str) -> None:
+            self._page = page
+            self._tooltip = tooltip
+            self.clicked = False
+
+        def hover(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self._page.tooltip = self._tooltip
+
+        def click(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            self.clicked = True
+
+        def is_visible(self) -> bool:
+            return True
+
+    class FakeCollection:
+        def __init__(self, items: list[FakeButton], first=None) -> None:
+            self._items = items
+            self.last = self
+            self.first = first if first is not None else self
+
+        def count(self) -> int:
+            return len(self._items)
+
+        def nth(self, index: int) -> FakeButton:
+            return self._items[index]
+
+        def click(self, timeout: int) -> None:
+            if self._items:
+                self._items[-1].click(timeout)
+
+        def wait_for(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeText:
+        def __init__(self, row: FakeRow) -> None:
+            self._row = row
+
+        def locator(self, selector: str):
+            assert "ancestor" in selector
+            return self._row
+
+        def wait_for(self, *args, **kwargs) -> None:
+            pass
+
+    class FakeRow:
+        def __init__(self, page: FakePage) -> None:
+            self.row_edit = FakeButton(page, "Изменить")
+            self.row_delete = FakeButton(page, "Удалить")
+
+        def get_by_role(self, *args, **kwargs):
+            return FakeCollection([])
+
+        def locator(self, selector: str):
+            if selector == ".moly-iconbutton":
+                return FakeCollection([])
+            if selector == 'button, [role="button"], [aria-label], [class*="icon"], [class*="Icon"]':
+                return FakeCollection([self.row_edit, self.row_delete])
+            raise AssertionError(selector)
+
+    class FakeBody:
+        def __init__(self, page: FakePage) -> None:
+            self._page = page
+
+        def inner_text(self, timeout: int) -> str:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            return self._page.tooltip
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.url = PlaywrightBrowserDriver.ADS_URL
+            self.tooltip = ""
+            self.global_delete = FakeButton(self, "Удалить")
+            self.row = FakeRow(self)
+
+        def get_by_text(self, text, **kwargs):
+            assert text == "ad-1"
+            return FakeText(self.row)
+
+        def get_by_role(self, *args, **kwargs):
+            return FakeCollection([], first=FakeCollection([]))
+
+        def locator(self, selector: str):
+            if selector == "body":
+                return FakeBody(self)
+            if selector == ".moly-iconbutton":
+                return FakeCollection([])
+            if selector == 'button, [role="button"], [aria-label], [class*="icon"], [class*="Icon"]':
+                return FakeCollection([self.global_delete])
+            raise AssertionError(selector)
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            assert milliseconds == 300
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_PROFILE,
+        user_data_dir=tmp_path / "profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    page = FakePage()
+    driver._ads_page = page
+    monkeypatch.setattr(
+        driver,
+        "read_current_advertisement",
+        lambda window_title: AdvertisementSnapshot("ad-1", "76,40", "Покупка"),
+    )
+    monkeypatch.setattr(
+        driver,
+        "_click_and_expect",
+        lambda page, click_action, expect_action, **kwargs: click_action(),
+    )
+
+    driver.delete_current_advertisement("Playwright profile")
+
+    assert page.global_delete.clicked is False
+    assert page.row.row_delete.clicked is True

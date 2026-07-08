@@ -186,6 +186,24 @@ def test_fill_form_runs_expected_sequence_for_existing_window() -> None:
     assert ("enter_security_password", state.browser.window_title, "Salam1337$") in driver.calls
 
 
+def test_create_advertisement_waits_for_created_ad_before_returning() -> None:
+    driver = FakeDriver()
+    service = BybitExistingBrowserService(driver=driver, logger=AppLogger())
+    state = AppState()
+    state.browser.window_title = "Bybit - ILYA BB - 1"
+
+    snapshot = service.create_advertisement(state)
+
+    assert snapshot == AdvertisementSnapshot("ad-1", "81,31", "Покупка")
+    password_index = driver.calls.index(
+        ("enter_security_password", state.browser.window_title, state.advertisement.security_password)
+    )
+    last_read_index = len(driver.calls) - 1 - list(reversed(driver.calls)).index(
+        ("read_current_advertisement", state.browser.window_title)
+    )
+    assert password_index < last_read_index
+
+
 def test_fill_form_deletes_existing_advertisement_before_opening_form() -> None:
     driver = FakeDriver()
     service = BybitExistingBrowserService(driver=driver, logger=AppLogger())
@@ -335,7 +353,7 @@ def test_gateway_search_merchant_uses_sell_tab() -> None:
     assert progress == [(2, 5, "Найден")]
 
 
-def test_create_advertisement_finishes_after_password_without_waiting_for_created_ad() -> None:
+def test_create_advertisement_waits_until_delayed_created_ad_appears() -> None:
     class DelayedAdvertisementDriver(FakeDriver):
         def __init__(self) -> None:
             super().__init__()
@@ -358,28 +376,28 @@ def test_create_advertisement_finishes_after_password_without_waiting_for_create
 
     result = service.create_advertisement(state)
 
-    assert result is None
-    assert driver.read_attempts == 1
-    assert any("не жду появления объявления" in message.lower() for message in messages)
+    assert result == AdvertisementSnapshot("ad-3", "81,31", "Покупка")
+    assert driver.read_attempts == 3
+    assert any("Жду появления созданного объявления" in message for message in messages)
 
 
-def test_create_advertisement_does_not_wait_for_created_ad_after_password() -> None:
-    class NoPostPublishReadDriver(FakeDriver):
+def test_create_advertisement_reads_created_ad_after_password() -> None:
+    class PostPublishReadDriver(FakeDriver):
         def __init__(self) -> None:
             super().__init__()
             self.password_entered = False
 
         def read_current_advertisement(self, window_title: str):
-            if self.password_entered:
-                raise AssertionError("create_advertisement must not wait for Ads after password")
             self.calls.append(("read_current_advertisement", window_title))
+            if self.password_entered:
+                return AdvertisementSnapshot("ad-after", "81,31", "Покупка")
             return AdvertisementSnapshot("ad-before", "80,99", "Покупка")
 
         def enter_security_password(self, window_title: str, password: str) -> None:
             super().enter_security_password(window_title, password)
             self.password_entered = True
 
-    driver = NoPostPublishReadDriver()
+    driver = PostPublishReadDriver()
     logger = AppLogger()
     messages: list[str] = []
     logger.subscribe(messages.append)
@@ -389,12 +407,12 @@ def test_create_advertisement_does_not_wait_for_created_ad_after_password() -> N
 
     result = service.create_advertisement(state)
 
-    assert result is None
+    assert result == AdvertisementSnapshot("ad-after", "81,31", "Покупка")
     assert ("enter_security_password", "Bybit - ILYA BB - 1", state.advertisement.security_password) in driver.calls
-    assert any("не жду появления объявления" in message.lower() for message in messages)
+    assert any("Жду появления созданного объявления" in message for message in messages)
 
 
-def test_create_advertisement_does_not_fail_when_created_ad_is_not_read_after_publish() -> None:
+def test_create_advertisement_fails_when_created_ad_is_not_read_after_publish() -> None:
     class MissingAdvertisementDriver(FakeDriver):
         def read_current_advertisement(self, window_title: str):
             self.calls.append(("read_current_advertisement", window_title))
@@ -408,10 +426,14 @@ def test_create_advertisement_does_not_fail_when_created_ad_is_not_read_after_pu
     state = AppState()
     state.browser.window_title = "Bybit - ILYA BB - 1"
 
-    result = service.create_advertisement(state)
+    try:
+        service.create_advertisement(state)
+    except RuntimeError as error:
+        assert "Не удалось дождаться появления созданного объявления" in str(error)
+    else:
+        raise AssertionError("expected RuntimeError")
 
-    assert result is None
-    assert any("не жду появления объявления" in message.lower() for message in messages)
+    assert any("Не удалось дождаться появления созданного объявления" in message for message in messages)
 
 
 def test_collect_all_merchants_retries_after_transient_failure_and_returns_result() -> None:
@@ -515,6 +537,6 @@ def test_create_advertisement_retries_when_read_current_advertisement_temporaril
 
     result = service.create_advertisement(state)
 
-    assert result is None
-    assert driver.read_attempts == 2
+    assert result == AdvertisementSnapshot("ad-9", "81,31", "Покупка")
+    assert driver.read_attempts == 3
     assert any("KeyError(None)" in message for message in messages)
