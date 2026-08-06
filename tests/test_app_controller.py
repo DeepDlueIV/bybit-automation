@@ -6,6 +6,7 @@ from bybit_automation.controllers.app_controller import AppController, position_
 from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
+from bybit_automation.models.browser_discovery import BrowserDiscoveryResult, BrowserTabInfo
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
 from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
 from bybit_automation.services.logging_service import AppLogger
@@ -56,6 +57,55 @@ def test_discover_browser_updates_state(tmp_path: Path) -> None:
     assert state.browser.connection_status == "Подключено"
     assert state.browser.window_title == "Chrome - Bybit"
     assert state.browser.tabs_summary == "Bybit P2P\nOrders"
+
+
+def test_system_chrome_extensions_profile_uses_cdp_profile_discovery(tmp_path: Path) -> None:
+    class CdpProfileService:
+        def discover_profile(self) -> BrowserDiscoveryResult:
+            return BrowserDiscoveryResult(
+                browser_name="System Chrome",
+                window_title="System Chrome extensions profile",
+                tabs=[BrowserTabInfo(title="Bybit P2P", role="other")],
+                ads_tab_title="",
+                sell_tab_title="",
+                connected=True,
+            )
+
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_browser_services={AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE: CdpProfileService()},
+    )
+    state = controller.default_state()
+    state.browser.browser_name = "Playwright Chromium"
+    state.browser.automation_mode = AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE
+
+    discovered = controller.discover_browser_for_state(state)
+
+    assert discovered.browser.connection_status == "Подключено"
+    assert discovered.browser.window_title == "System Chrome extensions profile"
+    assert discovered.browser.tabs_summary == "Bybit P2P"
+
+
+def test_recovery_mode_can_open_profile(tmp_path: Path) -> None:
+    class FakeService:
+        def __init__(self) -> None:
+            self.opened = False
+
+        def open_profile(self, window_title: str) -> None:
+            self.opened = True
+
+    service = FakeService()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_browser_services={AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY: service},
+    )
+    state = controller.default_state()
+    state.browser.automation_mode = AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY
+
+    assert controller.open_selected_browser_profile(state) is True
+    assert service.opened is True
 
 
 def test_run_merchant_cycle_uses_service(tmp_path: Path) -> None:
@@ -297,6 +347,38 @@ def test_open_selected_browser_profile_uses_selected_automation_mode_service(tmp
 
     assert result is True
     assert playwright_service.calls == [("open_profile", "Playwright profile")]
+
+
+def test_open_selected_browser_profile_allows_new_extension_profile_modes(tmp_path: Path) -> None:
+    class FakeProfileService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def open_profile(self, window_title: str) -> None:
+            self.calls.append(window_title)
+
+    chromium_service = FakeProfileService()
+    chrome_service = FakeProfileService()
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        bybit_browser_services={
+            AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS: chromium_service,
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE: chrome_service,
+        },
+    )
+
+    state = controller.default_state()
+    state.browser.automation_mode = AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS
+    state.browser.window_title = "chromium"
+    assert controller.open_selected_browser_profile(state) is True
+
+    state.browser.automation_mode = AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE
+    state.browser.window_title = "chrome"
+    assert controller.open_selected_browser_profile(state) is True
+
+    assert chromium_service.calls == ["chromium"]
+    assert chrome_service.calls == ["chrome"]
 
 
 def test_open_selected_browser_profile_does_not_call_uia_fallback(tmp_path: Path) -> None:

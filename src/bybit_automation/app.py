@@ -46,6 +46,34 @@ def build_main_window() -> MainWindow:
         ),
         logger=logger,
     )
+    playwright_chromium_extensions_service = BybitExistingBrowserService(
+        driver=PlaywrightBrowserDriver(
+            logger=logger,
+            mode=AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
+            user_data_dir=app_paths.playwright_chromium_extensions_profile_dir,
+            artifacts_dir=app_paths.playwright_artifacts_dir,
+            extension_dirs=[app_paths.bridge_extension_dir],
+        ),
+        logger=logger,
+    )
+    system_chrome_extensions_service = BybitExistingBrowserService(
+        driver=PlaywrightBrowserDriver(
+            logger=logger,
+            mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+            user_data_dir=app_paths.system_chrome_extensions_profile_dir,
+            artifacts_dir=app_paths.playwright_artifacts_dir,
+        ),
+        logger=logger,
+    )
+    system_chrome_extensions_recovery_service = BybitExistingBrowserService(
+        driver=PlaywrightBrowserDriver(
+            logger=logger,
+            mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+            user_data_dir=app_paths.system_chrome_extensions_profile_dir,
+            artifacts_dir=app_paths.playwright_artifacts_dir,
+        ),
+        logger=logger,
+    )
     incogniton_cdp_service = BybitExistingBrowserService(
         driver=PlaywrightBrowserDriver(
             logger=logger,
@@ -59,6 +87,9 @@ def build_main_window() -> MainWindow:
         AutomationMode.INCOGNITON_UIA: bybit_existing_browser_service,
         AutomationMode.PLAYWRIGHT_PROFILE: playwright_profile_service,
         AutomationMode.INCOGNITON_PLAYWRIGHT_CDP: incogniton_cdp_service,
+        AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS: playwright_chromium_extensions_service,
+        AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE: system_chrome_extensions_service,
+        AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY: system_chrome_extensions_recovery_service,
     }
     position_sound_notifier = AccountFoundSoundNotifier(on_playback=lambda mode: logger.info("Звуковое уведомление: системный Windows." if mode == "system" else "Звуковое уведомление: fallback beep."))
     error_sound_notifier = ErrorSoundNotifier()

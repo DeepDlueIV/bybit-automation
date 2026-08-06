@@ -1,0 +1,38 @@
+{
+   "action": {
+      "default_popup": "src/popup.html"
+   },
+   "background": {
+      "service_worker": "src/background/background.js"
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "css": [ "src/theme.css", "style.css" ],
+      "js": [ "src/contentScript.js" ],
+      "matches": [ "https://www.bybit.com/*", "https://www.bybitglobal.com/*", "https://www.bybit.global/*", "https://www.bybit-global.com/*", "https://www.bytick.com/*" ]
+   } ],
+   "content_security_policy": {
+      "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
+   },
+   "declarative_net_request": {
+      "rule_resources": [ {
+         "enabled": true,
+         "id": "ruleset_1",
+         "path": "rules.json"
+      } ]
+   },
+   "host_permissions": [ "https://*/*" ],
+   "icons": {
+      "128": "icon/128.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5DtaktJurozJ/gLHcT2/5wKX19Rak283Gr7KXLxDNJRr20TVW2k7sRjaPXnmA0z8OOZUq8pxU4yye7iz96vM3UQ8e5SdxpqK5jJtY0lDfqB7+rm+o+r1ZVdzKgclMWeC7sIuOJPA8rdd0wgMr/8MAGHIFI++lHqxSB9YrHOE1n4/4h9Ll5Mcxs0krammiWSWmQQvGSd5DONpj09hkq37dkrK5yJL31hXNvvi6hCgQEhlWF/ZRE/tRXs1Xo5MfvxDDsfan8g0B8K8afF2Omsv8iIxCGPdaaMn9JhwIq8n6n6tlsxUTG0HMtv79Tbg9FuDUmhrNTvMTifFqeRWNzGafQIDAQAB",
+   "manifest_version": 3,
+   "name": "BybitEye",
+   "permissions": [ "storage", "tabs", "declarativeNetRequest", "webRequest", "alarms", "cookies" ],
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "3.0.19",
+   "web_accessible_resources": [ {
+      "matches": [ "\u003Call_urls>" ],
+      "resources": [ "*.css", "icon/*.svg", "ws-hook.js", "fonts/*" ]
+   } ]
+}

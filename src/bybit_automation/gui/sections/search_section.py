@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -35,6 +36,13 @@ class SearchSection(QWidget):
         self.stop_search_button.setMaximumWidth(120)
         self.save_result_button = QPushButton("Записать результат")
 
+        self.detect_order_button = QPushButton("Обнаружить ордер")
+        self.loop_order_button = QPushButton("Зациклить обнаружение")
+        self.loop_order_button.setCheckable(True)
+        self.order_interval_edit = QLineEdit("10")
+        self.order_interval_edit.setValidator(QIntValidator(1, 3600))
+        self.check_orders_checkbox = QCheckBox("Проверять ордера")
+
         self.current_page_label = QLabel("")
         self.current_position_label = QLabel("")
         self.search_status_label = QLabel("")
@@ -52,6 +60,7 @@ class SearchSection(QWidget):
         cycle_group = QGroupBox("Цикл")
         cycle_layout = QVBoxLayout()
         cycle_layout.addWidget(buttons_row)
+        cycle_layout.addWidget(self.check_orders_checkbox)
         cycle_layout.addWidget(self.last_found_position_label)
         cycle_group.setLayout(cycle_layout)
         self.cycle_group = cycle_group
@@ -66,8 +75,18 @@ class SearchSection(QWidget):
         form.addRow("Статус поиска", self.search_status_label)
         group.setLayout(form)
 
+        order_group = QGroupBox("Обнаружение ордера")
+        order_layout = QHBoxLayout()
+        order_layout.addWidget(self.detect_order_button)
+        order_layout.addWidget(self.loop_order_button)
+        order_layout.addWidget(QLabel("Интервал, сек."))
+        order_layout.addWidget(self.order_interval_edit)
+        order_layout.addStretch(1)
+        order_group.setLayout(order_layout)
+
         layout = QVBoxLayout(self)
         layout.addWidget(group)
+        layout.addWidget(order_group)
 
     def set_last_found_position(self, position: int) -> None:
         range_text = _position_range_label(position)
@@ -81,6 +100,8 @@ class SearchSection(QWidget):
             current_page=self.current_page_label.text(),
             current_position=self.current_position_label.text(),
             search_status=self.search_status_label.text(),
+            order_detection_interval=self.order_interval_edit.text(),
+            check_orders_in_cycle=self.check_orders_checkbox.isChecked(),
         )
 
     def set_state(self, state: SearchSettings) -> None:
@@ -89,3 +110,5 @@ class SearchSection(QWidget):
         self.current_page_label.setText(state.current_page)
         self.current_position_label.setText(state.current_position)
         self.search_status_label.setText(state.search_status)
+        self.order_interval_edit.setText(state.order_detection_interval or "10")
+        self.check_orders_checkbox.setChecked(state.check_orders_in_cycle)

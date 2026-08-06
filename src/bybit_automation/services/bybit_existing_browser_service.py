@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from bybit_automation.models.app_state import AppState
+from bybit_automation.models.browser_discovery import BrowserDiscoveryResult
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.models.payment_method import PaymentMethodState
+from bybit_automation.models.order_detection import OrderDetectionResult
 from bybit_automation.services.logging_service import AppLogger
 
 
@@ -45,6 +47,7 @@ class BrowserDriver(Protocol):
     def sleep(self, seconds: float) -> None: ...
 
     def open_profile(self, window_title: str) -> None: ...
+    def detect_orders(self, window_title: str) -> OrderDetectionResult: ...
 
 
 @dataclass
@@ -109,6 +112,16 @@ class BybitExistingBrowserService:
     def open_profile(self, window_title: str) -> None:
         self.logger.info("Открываю Playwright-профиль без запуска цикла.")
         self.driver.open_profile(window_title)
+
+    def detect_orders(self, window_title: str) -> OrderDetectionResult:
+        if not hasattr(self.driver, "detect_orders"):
+            raise RuntimeError("Обнаружение ордеров доступно только в Playwright/CDP-режимах.")
+        return self.driver.detect_orders(window_title)
+
+    def discover_profile(self) -> BrowserDiscoveryResult:
+        if not hasattr(self.driver, "discover_profile"):
+            raise RuntimeError("Выбранный браузерный режим не поддерживает CDP-проверку профиля.")
+        return self.driver.discover_profile()
 
     def _prepare_fresh_price_for_new_advertisement(self, state: AppState) -> None:
         window_title = state.browser.window_title.strip()

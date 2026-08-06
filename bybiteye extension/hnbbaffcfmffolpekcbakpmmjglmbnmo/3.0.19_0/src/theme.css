@@ -1,0 +1,38 @@
+#newOrder[data-theme='light'],
+.popup[data-theme='light'],
+#NewBybitInfoBox[data-theme='light'] {
+    --bbe-bg: #fff;
+    --bbe-bg-subblock: #f6f7fb;
+    --bbe-bg-warning: #f2ced1;
+    --bbe-bg-logo: #fff;
+    --bbe-text-color: #0e1412;
+    --bbe-text-muted: #0c0b0966;
+    --bbe-text-disabled: #24242433;
+    --bbe-box-shadow: 0 0 0 2px var(--bds-gray-ele-border, #e9edf2);
+}
+
+#oldOrder[data-theme='light'],
+.popup[data-theme='light'],
+#OldBybitInfoBox[data-theme='light'] {
+    --bbe-bg: #fff;
+    --bbe-bg-subblock: #f6f7fb;
+    --bbe-bg-warning: #f2ced1;
+    --bbe-bg-logo: #f6f7fb;
+    --bbe-text-color: #0e1412;
+    --bbe-text-muted: #0c0b0966;
+    --bbe-text-disabled: #24242433;
+}
+
+#oldOrder[data-theme='dark'],
+#newOrder[data-theme='dark'],
+.popup[data-theme='dark'],
+#NewBybitInfoBox[data-theme='dark'],
+#OldBybitInfoBox[data-theme='dark'] {
+    --bbe-bg: #161617;
+    --bbe-bg-subblock: #050505;
+    --bbe-bg-warning: #461217;
+    --bbe-bg-logo: #181a1b;
+    --bbe-text-color: #ffffff;
+    --bbe-text-muted: #ffffff66;
+    --bbe-text-disabled: #000;
+}

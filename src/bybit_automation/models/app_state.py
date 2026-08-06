@@ -51,6 +51,8 @@ class SearchSettings:
     current_page: str = ""
     current_position: str = ""
     search_status: str = ""
+    order_detection_interval: str = "10"
+    check_orders_in_cycle: bool = False
 
 
 @dataclass

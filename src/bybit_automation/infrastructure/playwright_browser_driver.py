@@ -10,14 +10,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from bybit_automation.models.automation_mode import AutomationMode
+from bybit_automation.models.browser_discovery import BrowserDiscoveryResult, BrowserTabInfo
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.models.payment_method import PaymentMethodState
+from bybit_automation.models.order_detection import OrderDetectionResult
 from bybit_automation.services.logging_service import AppLogger
 
 
 class PlaywrightBrowserDriver:
     ADS_URL = "https://www.bybit.com/ru-RU/p2p/merchant-admin/ads"
     SELL_URL = "https://www.bybit.com/ru-RU/p2p/sell/USDT/RUB"
+    ORDER_LIST_PREFIX = "https://www.bybit.com/ru-RU/p2p/merchant-admin/order-list/"
+    ORDER_LIST_URL = ORDER_LIST_PREFIX + "processing?tokenId=&side=&status=0&expiresSoon=false"
     READY_TIMEOUT_MS = 15_000
 
     def __init__(
@@ -29,6 +33,7 @@ class PlaywrightBrowserDriver:
         artifacts_dir: Path,
         cdp_endpoint: str | None = None,
         headless: bool = False,
+        extension_dirs: list[Path] | None = None,
     ) -> None:
         self._logger = logger
         self._mode = mode
@@ -36,6 +41,7 @@ class PlaywrightBrowserDriver:
         self._artifacts_dir = artifacts_dir
         self._cdp_endpoint = cdp_endpoint or os.getenv("BYBIT_PLAYWRIGHT_CDP_ENDPOINT", "")
         self._headless = headless
+        self._extension_dirs = extension_dirs or []
         self._playwright: Any | None = None
         self._browser: Any | None = None
         self._chrome_process: subprocess.Popen | None = None
@@ -46,7 +52,19 @@ class PlaywrightBrowserDriver:
     def _log(self, message: str) -> None:
         self._logger.info(f"Playwright: {message}")
 
+    def _uses_system_chrome_extensions_profile(self) -> bool:
+        return self._mode in {
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        }
+
     def _ensure_context(self) -> Any:
+        if self._context is not None:
+            if self._uses_system_chrome_extensions_profile() and not self._context_is_alive(self._context):
+                self._log("System Chrome extensions profile: CDP-контекст закрыт, переподключаюсь к браузеру")
+                self._drop_playwright_connection()
+            else:
+                return self._context
         if self._context is not None:
             return self._context
         if self._mode == AutomationMode.INCOGNITON_PLAYWRIGHT_CDP and not self._cdp_endpoint:
@@ -71,6 +89,27 @@ class PlaywrightBrowserDriver:
             return self._context
 
         self._user_data_dir.mkdir(parents=True, exist_ok=True)
+        if self._uses_system_chrome_extensions_profile():
+            chrome_executable = self._find_chrome_executable()
+            if chrome_executable is None:
+                raise RuntimeError("Не найден установленный Google Chrome для режима System Chrome extensions profile.")
+            port = self._find_existing_debug_port()
+            if port is None:
+                port = self._find_free_port()
+                command = self._build_extensions_chrome_command(
+                    chrome_executable=chrome_executable,
+                    remote_debugging_port=port,
+                )
+                self._log(f"запускаю System Chrome profile с расширениями: {self._user_data_dir}")
+                self._log(f"аргументы запуска Chrome: {command}")
+                self._chrome_process = subprocess.Popen(command)
+            else:
+                self._log(f"подключаюсь к System Chrome extensions profile на порту {port}")
+            endpoint = f"http://127.0.0.1:{port}"
+            self._browser = self._connect_to_manual_chrome(endpoint)
+            self._context = self._browser.contexts[0] if self._browser.contexts else self._browser.new_context()
+            return self._context
+
         if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
             chrome_executable = self._find_chrome_executable()
             if chrome_executable is not None:
@@ -108,6 +147,30 @@ class PlaywrightBrowserDriver:
             )
         return self._context
 
+    def _context_is_alive(self, context: Any) -> bool:
+        try:
+            pages = context.pages
+            if pages:
+                _ = pages[0].url
+            return True
+        except Exception as error:
+            self._log(f"контекст Playwright больше недоступен: {error}")
+            return False
+
+    def _drop_playwright_connection(self) -> None:
+        self._context = None
+        self._browser = None
+        self._sell_page = None
+        self._ads_page = None
+        if self._playwright is None:
+            return
+        try:
+            self._playwright.stop()
+        except Exception as error:
+            self._log(f"не удалось остановить старый Playwright перед переподключением: {error}")
+        finally:
+            self._playwright = None
+
     def _find_chrome_executable(self) -> Path | None:
         candidates = (
             Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
@@ -129,6 +192,18 @@ class PlaywrightBrowserDriver:
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions",
+            "about:blank",
+        ]
+
+    def _build_extensions_chrome_command(self, *, chrome_executable: Path, remote_debugging_port: int) -> list[str]:
+        return [
+            str(chrome_executable),
+            f"--remote-debugging-port={remote_debugging_port}",
+            f"--user-data-dir={self._user_data_dir}",
+            "--remote-allow-origins=*",
+            "--start-maximized",
+            "--no-first-run",
+            "--no-default-browser-check",
             "about:blank",
         ]
 
@@ -171,12 +246,109 @@ class PlaywrightBrowserDriver:
                 time.sleep(0.2)
         raise RuntimeError(f"Не удалось подключиться к запущенному Chrome по {endpoint}: {last_error}")
 
+    def _restart_extensions_chrome(self) -> None:
+        """Корректно перезапускает только выделенный Chrome-профиль расширений."""
+        chrome_executable = self._find_chrome_executable()
+        if chrome_executable is None:
+            raise RuntimeError("Не найден установленный Google Chrome для восстановления профиля расширений.")
+
+        existing_port = self._find_existing_debug_port()
+        if existing_port is not None:
+            self._log(
+                "восстановление расширений: закрываю только выделенный Chrome-профиль "
+                f"{self._user_data_dir}"
+            )
+            try:
+                self._ensure_context()
+                self._request_browser_close()
+            except Exception as error:
+                raise RuntimeError(
+                    "Не удалось корректно закрыть выделенный Chrome-профиль для восстановления расширений."
+                ) from error
+            finally:
+                self._drop_playwright_connection()
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    if sock.connect_ex(("127.0.0.1", existing_port)) != 0:
+                        break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("Chrome-профиль не завершился за 5 секунд; восстановление отменено.")
+
+        port = self._find_free_port()
+        command = self._build_extensions_chrome_command(
+            chrome_executable=chrome_executable,
+            remote_debugging_port=port,
+        )
+        self._log(f"восстановление расширений: запускаю профиль заново: {command}")
+        self._chrome_process = subprocess.Popen(command)
+
+    def _request_browser_close(self) -> None:
+        """Завершает сам Chrome, а не только Playwright CDP-соединение."""
+        if self._browser is None:
+            raise RuntimeError("CDP-браузер не подключён.")
+        session = self._browser.new_browser_cdp_session()
+        session.send("Browser.close")
+
+    def discover_profile(self) -> BrowserDiscoveryResult:
+        """Читает состояние нового Chrome-профиля через CDP без UIA-поиска окна."""
+        if not self._uses_system_chrome_extensions_profile():
+            raise RuntimeError("CDP-проверка профиля доступна только для System Chrome extensions profile.")
+        if self._context is None and self._find_existing_debug_port() is None:
+            self._log("System Chrome extensions profile: Chrome с CDP-портом не запущен.")
+            return BrowserDiscoveryResult(
+                browser_name="System Chrome",
+                window_title="",
+                connected=False,
+            )
+
+        context = self._ensure_context()
+        tabs: list[BrowserTabInfo] = []
+        ads_tab_title = ""
+        sell_tab_title = ""
+        for page in context.pages:
+            try:
+                title = page.title().strip() or page.url.strip() or "Новая вкладка"
+                url = page.url.lower()
+            except Exception as error:
+                self._log(f"не удалось прочитать вкладку CDP-профиля: {error}")
+                continue
+            role = "other"
+            if "merchant-admin/ads" in url:
+                role = "ads"
+                ads_tab_title = title
+            elif "/p2p/sell/" in url:
+                role = "sell"
+                sell_tab_title = title
+            tabs.append(BrowserTabInfo(title=title, role=role))
+        self._log(f"System Chrome extensions profile: CDP подключён; вкладок: {len(tabs)}.")
+        return BrowserDiscoveryResult(
+            browser_name="System Chrome",
+            window_title="System Chrome extensions profile",
+            tabs=tabs,
+            ads_tab_title=ads_tab_title,
+            sell_tab_title=sell_tab_title,
+            connected=True,
+        )
+
     def _launch_persistent_context_kwargs(self, *, prefer_chrome: bool = True) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "headless": self._headless,
             "viewport": {"width": 1440, "height": 1000},
             "locale": "ru-RU",
         }
+        if self._mode == AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS:
+            valid_extension_dirs = self._valid_extension_dirs()
+            if valid_extension_dirs:
+                extension_arg = ",".join(str(path) for path in valid_extension_dirs)
+                kwargs["args"] = [
+                    f"--disable-extensions-except={extension_arg}",
+                    f"--load-extension={extension_arg}",
+                ]
+            return kwargs
+
         if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
             if prefer_chrome:
                 kwargs["channel"] = "chrome"
@@ -188,7 +360,28 @@ class PlaywrightBrowserDriver:
             ]
         return kwargs
 
+    def _valid_extension_dirs(self) -> list[Path]:
+        return [path for path in self._extension_dirs if (path / "manifest.json").exists()]
+
     def open_profile(self, window_title: str) -> None:
+        if self._mode == AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY:
+            self._user_data_dir.mkdir(parents=True, exist_ok=True)
+            self._restart_extensions_chrome()
+            return
+        if self._mode == AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE:
+            self._user_data_dir.mkdir(parents=True, exist_ok=True)
+            chrome_executable = self._find_chrome_executable()
+            if chrome_executable is None:
+                raise RuntimeError("Не найден установленный Google Chrome для открытия System Chrome extensions profile.")
+            port = self._find_free_port()
+            command = self._build_extensions_chrome_command(
+                chrome_executable=chrome_executable,
+                remote_debugging_port=port,
+            )
+            self._log(f"открываю System Chrome profile для ручной установки расширений: {command}")
+            subprocess.Popen(command)
+            return
+
         if self._mode == AutomationMode.PLAYWRIGHT_PROFILE:
             self._user_data_dir.mkdir(parents=True, exist_ok=True)
             chrome_executable = self._find_chrome_executable()
@@ -236,6 +429,24 @@ class PlaywrightBrowserDriver:
         if role == "Sell":
             self._dismiss_sell_intro_modal_if_open(page)
         return page
+
+    def detect_orders(self, window_title: str) -> OrderDetectionResult:
+        """Считывает строки таблицы заказов; UI и другие вкладки не изменяет."""
+        context = self._ensure_context()
+        page = next((candidate for candidate in context.pages if candidate.url.startswith(self.ORDER_LIST_PREFIX)), None)
+        if page is None:
+            page = context.new_page()
+            self._log(f"открываю вкладку заказов: {self.ORDER_LIST_URL}")
+            page.goto(self.ORDER_LIST_URL, wait_until="domcontentloaded", timeout=self.READY_TIMEOUT_MS)
+        rows = page.locator("table tbody tr")
+        row_count = rows.count()
+        rows_text: list[str] = []
+        for index in range(row_count):
+            text = rows.nth(index).inner_text(timeout=self.READY_TIMEOUT_MS).strip()
+            if text and text.casefold() != "no records":
+                rows_text.append(text)
+        self._log(f"обнаружение заказов: url={page.url}; строк={len(rows_text)}; найден={bool(rows_text)}")
+        return OrderDetectionResult(found=bool(rows_text), url=page.url, row_count=len(rows_text), rows_text=tuple(rows_text))
 
     def _same_base_url(self, current_url: str, target_url: str) -> bool:
         return current_url.split("?", 1)[0].rstrip("/") == target_url.rstrip("/")
@@ -766,6 +977,8 @@ class PlaywrightBrowserDriver:
 
     def select_trade_side(self, window_title: str, trade_side: str) -> None:
         self._dismiss_payment_modal_if_open(self._ads_page)
+        if self._mode == AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE:
+            self._wait_for_bybit_interceptors_to_clear(self._ads_page, "Ads form")
         button = self._ads_page.locator("button").filter(has_text=re.compile(f"^{re.escape(trade_side)}$", re.IGNORECASE)).first
         self._click_and_expect(
             self._ads_page,
@@ -901,6 +1114,17 @@ class PlaywrightBrowserDriver:
         if cancel.count() > 0 and cancel.is_visible():
             cancel.click(timeout=self.READY_TIMEOUT_MS)
             page.wait_for_timeout(300)
+
+    def _wait_for_bybit_interceptors_to_clear(self, page: Any, role: str) -> None:
+        # В новом Chrome-профиле Bybit часто оставляет спиннер или затемняющий слой поверх формы.
+        for selector in (".fiat__spinning", ".moly-dialog-shadow"):
+            try:
+                blocker = page.locator(selector).first
+                if blocker.count() == 0:
+                    continue
+                blocker.wait_for(state="hidden", timeout=5_000)
+            except Exception as error:
+                self._log(f"{role}: блокирующий слой {selector} не исчез перед кликом: {error}")
 
     def _set_checkbox_by_text(self, page: Any, pattern: re.Pattern[str], checked: bool) -> None:
         checkbox = page.get_by_role("checkbox", name=pattern).first

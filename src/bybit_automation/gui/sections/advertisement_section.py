@@ -56,6 +56,7 @@ class AdvertisementSection(QWidget):
         self.phone_linked_checkbox = QCheckBox("Номер телефона привязан")
         self.email_linked_checkbox = QCheckBox("Адрес электронной почты привязан")
         self.notes_edit = QTextEdit()
+        self.notes_edit.setFixedHeight(self.notes_edit.fontMetrics().lineSpacing() * 4 + 14)
 
         self.cash_deposit_checkbox = QCheckBox("Cash Deposit to Bank")
         self.mobile_top_up_checkbox = QCheckBox("Mobile Top-up")
@@ -92,7 +93,7 @@ class AdvertisementSection(QWidget):
 
         form.addRow("Примечание", self.notes_edit)
 
-        payment_methods = QVBoxLayout()
+        payment_methods = QHBoxLayout()
         payment_methods.addWidget(self.cash_deposit_checkbox)
         payment_methods.addWidget(self.mobile_top_up_checkbox)
         payment_methods.addWidget(self.bank_transfer_checkbox)

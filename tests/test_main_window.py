@@ -79,6 +79,33 @@ def test_discover_browser_preserves_current_form_state(qtbot, tmp_path: Path) ->
     assert window.browser_section.window_title_label.text() == "Chrome - Bybit"
 
 
+def test_system_chrome_extensions_profile_discovers_system_chrome_even_when_old_browser_choice_is_saved(qtbot, tmp_path: Path) -> None:
+    class FakeController(AppController):
+        def __init__(self) -> None:
+            super().__init__(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
+            self.discovered_browser_name = ""
+
+        def discover_browser(self, browser_name: str):
+            self.discovered_browser_name = browser_name
+            state = AppState()
+            state.browser.browser_name = browser_name
+            state.browser.window_title = "Chrome - Bybit"
+            state.browser.connection_status = "Подключено"
+            return state
+
+    controller = FakeController()
+    window = MainWindow(controller=controller, logger=controller._logger)
+    qtbot.addWidget(window)
+    window.browser_section.browser_combo.setCurrentText("Playwright Chromium")
+    window.browser_section.automation_mode_combo.setCurrentText(AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE)
+
+    window.on_discover_browser()
+
+    assert controller.discovered_browser_name == "System Chrome"
+    assert window.browser_section.browser_combo.currentText() == "System Chrome"
+    assert window.browser_section.automation_mode_combo.currentText() == AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE
+
+
 def test_search_section_has_cycle_group_with_start_and_stop_buttons(qtbot) -> None:
     section = SearchSection()
     qtbot.addWidget(section)
@@ -87,7 +114,7 @@ def test_search_section_has_cycle_group_with_start_and_stop_buttons(qtbot) -> No
     assert section.start_search_button.text() == "Старт"
     assert section.stop_search_button.text() == "Стоп"
     assert section.last_found_position_label.text() == "Последняя найдена позиция: не найдено"
-    assert [group.title() for group in section.findChildren(QGroupBox)] == ["Поиск"]
+    assert [group.title() for group in section.findChildren(QGroupBox)] == ["Поиск", "Обнаружение ордера"]
 
 
 def test_search_section_updates_last_found_position_range(qtbot) -> None:
@@ -108,6 +135,9 @@ def test_browser_section_exposes_automation_modes(qtbot) -> None:
         AutomationMode.INCOGNITON_UIA,
         AutomationMode.INCOGNITON_PLAYWRIGHT_CDP,
         AutomationMode.PLAYWRIGHT_PROFILE,
+        AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
+        AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+        AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
     ]
 
     section.automation_mode_combo.setCurrentText(AutomationMode.PLAYWRIGHT_PROFILE)
@@ -124,64 +154,14 @@ def test_browser_section_exposes_supported_browsers_only(qtbot) -> None:
     assert browsers == ["Incogniton", "System Chrome", "Playwright Chromium"]
 
 
-def test_browser_section_has_open_playwright_profile_button(qtbot) -> None:
+def test_browser_section_has_only_open_and_check_browser_controls(qtbot) -> None:
     section = BrowserSection()
     qtbot.addWidget(section)
 
-    assert section.open_playwright_profile_button.text() == "Открыть Playwright-профиль"
-    assert section.diagnose_sell_button.text() == "Диагностика Sell"
-    assert section.diagnose_ads_button.text() == "Диагностика Ads"
-    assert section.open_ads_form_button.text() == "Открыть форму Ads"
-
-
-def test_main_window_open_ads_form_button_triggers_controller_without_error_sound(qtbot, tmp_path: Path) -> None:
-    class FakeController(AppController):
-        def __init__(self) -> None:
-            super().__init__(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
-            self.called = False
-
-        def open_ads_form_for_smoke_check(self, state) -> bool:
-            self.called = True
-            return True
-
-    class FakeErrorSoundNotifier:
-        def __init__(self) -> None:
-            self.played = False
-
-        def play(self) -> None:
-            self.played = True
-
-    controller = FakeController()
-    notifier = FakeErrorSoundNotifier()
-    window = MainWindow(controller=controller, logger=controller._logger, error_sound_notifier=notifier)
-    qtbot.addWidget(window)
-
-    window.browser_section.open_ads_form_button.click()
-
-    assert controller.called is True
-    assert notifier.played is False
-
-
-def test_main_window_open_ads_form_error_does_not_play_error_sound(qtbot, tmp_path: Path) -> None:
-    class FakeController(AppController):
-        def open_ads_form_for_smoke_check(self, state) -> bool:
-            raise RuntimeError("manual click required")
-
-    class FakeErrorSoundNotifier:
-        def __init__(self) -> None:
-            self.played = False
-
-        def play(self) -> None:
-            self.played = True
-
-    controller = FakeController(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
-    notifier = FakeErrorSoundNotifier()
-    window = MainWindow(controller=controller, logger=controller._logger, error_sound_notifier=notifier)
-    qtbot.addWidget(window)
-
-    window.browser_section.open_ads_form_button.click()
-
-    assert notifier.played is False
+    assert section.open_playwright_profile_button.text() == "Открыть выбранный браузер"
+    assert not hasattr(section, "diagnose_sell_button")
+    assert not hasattr(section, "diagnose_ads_button")
+    assert not hasattr(section, "open_ads_form_button")
 
 
 def test_browser_section_uses_compact_grid_without_inner_scroll(qtbot) -> None:

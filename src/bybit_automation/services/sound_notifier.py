@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from pathlib import Path
 from threading import Thread
 
 
@@ -111,3 +112,22 @@ class ErrorSoundNotifier:
         except ImportError:
             return
         winsound.Beep(frequency, duration_ms)
+
+
+class LoopSoundNotifier:
+    """Проигрывает WAV циклически до явной остановки."""
+
+    def __init__(self, sound_path: Path) -> None:
+        self._sound_path = sound_path
+
+    def start(self) -> None:
+        if _running_under_pytest():
+            return
+        import winsound
+        winsound.PlaySound(str(self._sound_path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+
+    def stop(self) -> None:
+        if _running_under_pytest():
+            return
+        import winsound
+        winsound.PlaySound(None, winsound.SND_PURGE)

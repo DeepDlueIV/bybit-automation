@@ -17,6 +17,22 @@ class AppPaths:
         return self.data_dir / "playwright-profile"
 
     @property
+    def playwright_chromium_extensions_profile_dir(self) -> Path:
+        return self.data_dir / "playwright-chromium-extensions-profile"
+
+    @property
+    def system_chrome_extensions_profile_dir(self) -> Path:
+        return self.data_dir / "system-chrome-extensions-profile"
+
+    @property
+    def bridge_extension_dir(self) -> Path:
+        bybiteye_dir = self.root_dir / "bybiteye extension"
+        if bybiteye_dir.exists():
+            for manifest_file in bybiteye_dir.rglob("manifest.json"):
+                return manifest_file.parent
+        return self.data_dir / "bridge-extension"
+
+    @property
     def playwright_artifacts_dir(self) -> Path:
         return self.data_dir / "playwright-artifacts"
 

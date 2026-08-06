@@ -7,7 +7,9 @@ from typing import Any, Callable, Protocol
 from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.app_state import AppState
+from bybit_automation.models.browser_discovery import BrowserDiscoveryResult
 from bybit_automation.models.merchant_cycle import MerchantCycleResult
+from bybit_automation.models.order_detection import OrderDetectionResult
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
 from bybit_automation.services.bybit_existing_browser_service import BybitExistingBrowserService
 from bybit_automation.services.logging_service import AppLogger
@@ -83,7 +85,15 @@ class AppController:
         self._logger.info(f"{action_name} пока не реализовано.")
 
     def open_selected_browser_profile(self, state: AppState) -> bool:
-        if state.browser.automation_mode != AutomationMode.PLAYWRIGHT_PROFILE:
+        profile_modes = {
+            AutomationMode.PLAYWRIGHT_PROFILE,
+            AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        }
+        if state.browser.automation_mode not in profile_modes:
+            self._logger.info("Profile opener is available only for Playwright/System Chrome profile modes.")
+            return False
             self._logger.info("Открытие Playwright-профиля доступно только в режиме Playwright profile.")
             return False
         browser_service = self._browser_service_for(state)
@@ -108,6 +118,19 @@ class AppController:
             return AppState()
 
         result = self._browser_discovery_service.discover(browser_name)
+        return self._state_from_browser_discovery(result)
+
+    def discover_browser_for_state(self, state: AppState) -> AppState:
+        if state.browser.automation_mode in {
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        }:
+            browser_service = self._browser_service_for(state)
+            if browser_service is not None and hasattr(browser_service, "discover_profile"):
+                return self._state_from_browser_discovery(browser_service.discover_profile())
+        return self.discover_browser(state.browser.browser_name)
+
+    def _state_from_browser_discovery(self, result: BrowserDiscoveryResult) -> AppState:
         state = AppState.from_browser_discovery(result)
         summary = ", ".join(tab.title for tab in result.tabs) if result.tabs else "вкладки не найдены"
         self._logger.info(f"Браузер: {result.window_title or 'не найден'}; вкладки: {summary}")
@@ -214,6 +237,13 @@ class AppController:
         self._notify_found_account_recorded()
         self._logger.info(f"Цикл: аккаунт '{account_name}' найден на позиции {found_position}. Результат записан.")
         return True
+
+    def detect_orders(self, state: AppState) -> OrderDetectionResult:
+        """Проверяет страницу заказов только в Playwright/CDP-режиме."""
+        service = self._browser_service_for(state)
+        if service is None or not hasattr(service, "detect_orders"):
+            raise RuntimeError("Обнаружение ордеров доступно только в Playwright/CDP-режимах.")
+        return service.detect_orders(state.browser.window_title)
 
     def _find_merchant_position(self, merchants: list[str], account_name: str) -> int:
         target = self._normalize_merchant_name(account_name)

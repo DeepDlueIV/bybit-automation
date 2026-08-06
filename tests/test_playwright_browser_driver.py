@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import pytest
 
@@ -104,6 +105,108 @@ def test_playwright_profile_manual_chrome_command_disables_extensions_for_stable
     ]
 
 
+def test_system_chrome_extensions_command_keeps_extensions_enabled(tmp_path) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+        user_data_dir=tmp_path / "extensions-profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    command = driver._build_extensions_chrome_command(
+        chrome_executable=tmp_path / "chrome.exe",
+        remote_debugging_port=9224,
+    )
+
+    assert command == [
+        str(tmp_path / "chrome.exe"),
+        "--remote-debugging-port=9224",
+        f"--user-data-dir={tmp_path / 'extensions-profile'}",
+        "--remote-allow-origins=*",
+        "--start-maximized",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "about:blank",
+    ]
+    assert "--disable-extensions" not in command
+
+
+def test_system_chrome_extensions_recovery_restarts_only_dedicated_profile(tmp_path, monkeypatch) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        user_data_dir=tmp_path / "extensions-profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(driver, "_restart_extensions_chrome", lambda: calls.append("restart"))
+
+    driver.open_profile("")
+
+    assert calls == ["restart"]
+
+
+def test_recovery_requests_real_browser_close_over_cdp(tmp_path) -> None:
+    sent: list[str] = []
+
+    class FakeSession:
+        def send(self, method: str) -> None:
+            sent.append(method)
+
+    class FakeBrowser:
+        def new_browser_cdp_session(self) -> FakeSession:
+            return FakeSession()
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        user_data_dir=tmp_path / "extensions-profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    driver._browser = FakeBrowser()
+
+    driver._request_browser_close()
+
+    assert sent == ["Browser.close"]
+
+
+def test_playwright_chromium_extensions_loads_valid_unpacked_extension(tmp_path) -> None:
+    extension_dir = tmp_path / "bridge-extension"
+    extension_dir.mkdir()
+    (extension_dir / "manifest.json").write_text('{"manifest_version": 3, "name": "Bridge", "version": "1.0"}')
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
+        user_data_dir=tmp_path / "chromium-extension-profile",
+        artifacts_dir=tmp_path / "artifacts",
+        extension_dirs=[extension_dir],
+    )
+
+    kwargs = driver._launch_persistent_context_kwargs()
+
+    assert kwargs["args"] == [
+        f"--disable-extensions-except={extension_dir}",
+        f"--load-extension={extension_dir}",
+    ]
+    assert "channel" not in kwargs
+    assert "ignore_default_args" not in kwargs
+
+
+def test_playwright_chromium_extensions_ignores_missing_extension_dir(tmp_path) -> None:
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
+        user_data_dir=tmp_path / "chromium-extension-profile",
+        artifacts_dir=tmp_path / "artifacts",
+        extension_dirs=[tmp_path / "missing-extension"],
+    )
+
+    kwargs = driver._launch_persistent_context_kwargs()
+
+    assert "args" not in kwargs
+
+
 def test_open_profile_does_not_connect_playwright_cdp_for_manual_browser(tmp_path, monkeypatch) -> None:
     launched_commands: list[list[str]] = []
 
@@ -138,6 +241,106 @@ def test_open_profile_does_not_connect_playwright_cdp_for_manual_browser(tmp_pat
             "about:blank",
         ]
     ]
+
+
+def test_open_system_chrome_extensions_profile_uses_extension_safe_command(tmp_path, monkeypatch) -> None:
+    launched_commands: list[list[str]] = []
+
+    class FakeProcess:
+        pass
+
+    def fake_popen(command: list[str]):
+        launched_commands.append(command)
+        return FakeProcess()
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+        user_data_dir=tmp_path / "extensions-profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    monkeypatch.setattr(driver, "_find_chrome_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(driver, "_find_free_port", lambda: 9224)
+    monkeypatch.setattr("bybit_automation.infrastructure.playwright_browser_driver.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(driver, "_ensure_context", lambda: (_ for _ in ()).throw(AssertionError("must not connect CDP")))
+
+    driver.open_profile("")
+
+    assert launched_commands == [
+        [
+            str(tmp_path / "chrome.exe"),
+            "--remote-debugging-port=9224",
+            f"--user-data-dir={tmp_path / 'extensions-profile'}",
+            "--remote-allow-origins=*",
+            "--start-maximized",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "about:blank",
+        ]
+    ]
+
+
+def test_system_chrome_extensions_profile_drops_closed_cached_context(tmp_path) -> None:
+    class ClosedContext:
+        @property
+        def pages(self) -> list[Any]:
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+        user_data_dir=tmp_path / "extensions-profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    assert driver._context_is_alive(ClosedContext()) is False
+
+
+def test_system_chrome_extensions_profile_waits_for_bybit_overlays_before_trade_side_click(tmp_path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeButton:
+        def __init__(self) -> None:
+            self.first = self
+
+        def filter(self, **kwargs):
+            assert "has_text" in kwargs
+            return self
+
+        def click(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            calls.append("click")
+
+        def wait_for(self, timeout: int) -> None:
+            assert timeout == PlaywrightBrowserDriver.READY_TIMEOUT_MS
+            calls.append("wait")
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.button = FakeButton()
+
+        def locator(self, selector: str) -> FakeButton:
+            assert selector == "button"
+            return self.button
+
+    driver = PlaywrightBrowserDriver(
+        logger=AppLogger(),
+        mode=AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+        user_data_dir=tmp_path / "extensions-profile",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    driver._ads_page = FakePage()
+    monkeypatch.setattr(driver, "_dismiss_payment_modal_if_open", lambda page: calls.append("payment"))
+    monkeypatch.setattr(driver, "_wait_for_bybit_interceptors_to_clear", lambda page, role: calls.append(f"overlay:{role}"))
+    monkeypatch.setattr(
+        driver,
+        "_click_and_expect",
+        lambda page, click_action, expect_action, **kwargs: (click_action(), expect_action()),
+    )
+
+    driver.select_trade_side("System Chrome extensions profile", "Покупка")
+
+    assert calls == ["payment", "overlay:Ads form", "click", "wait"]
 
 
 def test_playwright_profile_finds_existing_debug_port_for_same_profile(tmp_path, monkeypatch) -> None:

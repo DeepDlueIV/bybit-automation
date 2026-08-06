@@ -34,6 +34,24 @@ def test_app_paths_exposes_playwright_runtime_dirs(tmp_path: Path) -> None:
 
     assert paths.playwright_profile_dir == tmp_path / "data" / "playwright-profile"
     assert paths.playwright_artifacts_dir == tmp_path / "data" / "playwright-artifacts"
+    assert paths.bridge_extension_dir == tmp_path / "data" / "bridge-extension"
+
+
+def test_app_paths_finds_nested_bybiteye_extension_manifest(tmp_path: Path) -> None:
+    from bybit_automation.infrastructure.paths import AppPaths
+
+    extension_dir = tmp_path / "bybiteye extension" / "hnbbaffcfmffolpekcbakpmmjglmbnmo" / "3.0.19_0"
+    extension_dir.mkdir(parents=True)
+    (extension_dir / "manifest.json").write_text('{"manifest_version": 3}')
+    paths = AppPaths(
+        root_dir=tmp_path,
+        data_dir=tmp_path / "data",
+        settings_file=tmp_path / "data" / "settings.json",
+        found_accounts_file=tmp_path / "data" / "found_accounts.txt",
+        log_file=tmp_path / "data" / "app.log",
+    )
+
+    assert paths.bridge_extension_dir == extension_dir
 
 
 def test_load_returns_default_state_when_file_is_missing(tmp_path: Path) -> None:

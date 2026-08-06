@@ -16,13 +16,16 @@ from PySide6.QtWidgets import (
 )
 
 from bybit_automation.controllers.app_controller import AppController
+from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.gui.sections.advertisement_section import AdvertisementSection
 from bybit_automation.gui.sections.browser_section import BrowserSection
 from bybit_automation.gui.sections.log_section import LogSection
 from bybit_automation.gui.sections.search_section import SearchSection
+from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.app_state import AppState
+from bybit_automation.models.order_detection import OrderDetectionResult
 from bybit_automation.services.logging_service import AppLogger
-from bybit_automation.services.sound_notifier import ErrorSoundNotifier
+from bybit_automation.services.sound_notifier import ErrorSoundNotifier, LoopSoundNotifier
 
 
 def _describe_exception(error: Exception) -> str:
@@ -77,6 +80,7 @@ class ListingCycleWorker(QObject):
     found_position = Signal(int)
     finished = Signal(str)
     failed = Signal(str)
+    order_found = Signal(str)
 
     def __init__(self, controller: AppController, state: AppState) -> None:
         super().__init__()
@@ -96,6 +100,12 @@ class ListingCycleWorker(QObject):
                 found = self._controller.run_listing_cycle_iteration(
                     self._state, stop_check=lambda: self._stop_requested
                 )
+                if self._state.search.check_orders_in_cycle:
+                    order_result = self._controller.detect_orders(self._state)
+                    if order_result.found:
+                        self.order_found.emit(order_result.url)
+                        self.progress.emit("Цикл остановлен: обнаружен ордер.")
+                        break
                 if found:
                     position = getattr(self._controller, "last_found_position", 0)
                     if position:
@@ -108,6 +118,41 @@ class ListingCycleWorker(QObject):
             self.failed.emit(_describe_exception(error))
 
 
+class OrderDetectionWorker(QObject):
+    """Единично или периодически читает страницу заказов в отдельном потоке."""
+
+    detected = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, controller: AppController, state: AppState, interval_seconds: int, loop: bool) -> None:
+        super().__init__()
+        self._controller = controller
+        self._state = AppState.from_dict(state.to_dict())
+        self._interval_seconds = max(1, interval_seconds)
+        self._loop = loop
+        self._stop_requested = False
+
+    def request_stop(self) -> None:
+        self._stop_requested = True
+
+    def run(self) -> None:
+        try:
+            while not self._stop_requested:
+                result = self._controller.detect_orders(self._state)
+                self.detected.emit(result)
+                if result.found or not self._loop:
+                    break
+                for _ in range(self._interval_seconds * 10):
+                    if self._stop_requested:
+                        break
+                    QThread.msleep(100)
+        except Exception as error:
+            self.failed.emit(_describe_exception(error))
+        finally:
+            self.finished.emit()
+
+
 class MainWindow(QMainWindow):
     def __init__(self, controller: AppController, logger: AppLogger, error_sound_notifier: ErrorSoundNotifier | None = None) -> None:
         super().__init__()
@@ -118,6 +163,10 @@ class MainWindow(QMainWindow):
         self._search_worker: MerchantSearchWorker | None = None
         self._cycle_thread: QThread | None = None
         self._cycle_worker: ListingCycleWorker | None = None
+        self._order_thread: QThread | None = None
+        self._order_worker: OrderDetectionWorker | None = None
+        self._order_dialog: QMessageBox | None = None
+        self._order_sound = LoopSoundNotifier(AppPaths.from_cwd().root_dir / "sound" / "Alarm09.wav")
         self._log_relay = LogRelay()
 
         self.setWindowTitle("Автоматизация Bybit")
@@ -182,13 +231,12 @@ class MainWindow(QMainWindow):
         self.advertisement_section.get_current_price_button.clicked.connect(self.on_fetch_current_price)
         self.browser_section.check_browser_button.clicked.connect(self.on_discover_browser)
         self.browser_section.open_playwright_profile_button.clicked.connect(self.on_open_playwright_profile)
-        self.browser_section.diagnose_sell_button.clicked.connect(self.on_diagnose_sell_page)
-        self.browser_section.diagnose_ads_button.clicked.connect(self.on_diagnose_ads_page)
-        self.browser_section.open_ads_form_button.clicked.connect(self.on_open_ads_form)
         self.search_section.collect_merchants_button.clicked.connect(self.on_collect_merchants)
         self.search_section.find_account_button.clicked.connect(self.on_start_search)
         self.search_section.start_search_button.clicked.connect(self.on_start_cycle)
         self.search_section.stop_search_button.clicked.connect(self.on_stop_cycle)
+        self.search_section.detect_order_button.clicked.connect(self.on_detect_order)
+        self.search_section.loop_order_button.toggled.connect(self.on_toggle_order_loop)
         self.search_section.save_result_button.clicked.connect(self.on_save_result)
         self.save_action.triggered.connect(self.on_save_settings)
         self.load_action.triggered.connect(self.on_load_settings)
@@ -247,7 +295,8 @@ class MainWindow(QMainWindow):
 
     def on_discover_browser(self) -> None:
         current_state = self.collect_state()
-        discovered_state = self._controller.discover_browser(self.browser_section.browser_combo.currentText())
+        current_state.browser.browser_name = self._browser_name_for_selected_automation()
+        discovered_state = self._controller.discover_browser_for_state(current_state)
         current_state.browser = discovered_state.browser
         current_state.browser.automation_mode = self.browser_section.automation_mode_combo.currentText()
         self.apply_state(current_state)
@@ -255,6 +304,7 @@ class MainWindow(QMainWindow):
 
     def on_open_playwright_profile(self) -> None:
         try:
+            self._browser_name_for_selected_automation()
             opened = self._controller.open_selected_browser_profile(self.collect_state())
         except (RuntimeError, KeyError) as error:
             self._logger.info(_describe_exception(error))
@@ -264,6 +314,23 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Playwright-профиль открыт")
         else:
             self.status_bar.showMessage("Выбранный режим не поддерживает открытие профиля")
+
+    def _browser_name_for_selected_automation(self) -> str:
+        """Синхронизирует тип окна с профилем, который фактически запускает этот режим."""
+        mode = self.browser_section.automation_mode_combo.currentText()
+        browser_name = self.browser_section.browser_combo.currentText()
+        if mode not in {
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
+            AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        }:
+            return browser_name
+        if browser_name != "System Chrome":
+            self.browser_section.browser_combo.setCurrentText("System Chrome")
+            self._logger.info(
+                "System Chrome extensions profile использует обычный Google Chrome; "
+                "для поиска окна выбран System Chrome."
+            )
+        return "System Chrome"
 
     def on_fill_form(self) -> None:
         try:
@@ -338,6 +405,7 @@ class MainWindow(QMainWindow):
         self._cycle_worker.moveToThread(self._cycle_thread)
         self._cycle_thread.started.connect(self._cycle_worker.run)
         self._cycle_worker.progress.connect(self._on_cycle_progress)
+        self._cycle_worker.order_found.connect(self._on_cycle_order_found)
         self._cycle_worker.found_position.connect(self.search_section.set_last_found_position)
         self._cycle_worker.finished.connect(self._on_cycle_finished)
         self._cycle_worker.failed.connect(self._on_cycle_failed)
@@ -350,6 +418,94 @@ class MainWindow(QMainWindow):
     def on_stop_cycle(self) -> None:
         if self._cycle_worker is not None:
             self._cycle_worker.request_stop()
+
+    def on_detect_order(self) -> None:
+        if self._order_thread is not None:
+            return
+        self._start_order_detection(loop=False)
+
+    def on_toggle_order_loop(self, enabled: bool) -> None:
+        if enabled:
+            if self._order_thread is None:
+                self._start_order_detection(loop=True)
+            return
+        if self._order_worker is not None:
+            self._order_worker.request_stop()
+
+    def _start_order_detection(self, *, loop: bool) -> None:
+        state = self.collect_state()
+        try:
+            interval = int(state.search.order_detection_interval or "10")
+        except ValueError:
+            interval = 10
+        self._order_worker = OrderDetectionWorker(self._controller, state, interval, loop)
+        self._order_thread = QThread(self)
+        self._order_worker.moveToThread(self._order_thread)
+        self._order_thread.started.connect(self._order_worker.run)
+        self._order_worker.detected.connect(self._on_order_detection_result)
+        self._order_worker.failed.connect(self._on_order_detection_failed)
+        self._order_worker.finished.connect(self._on_order_detection_finished)
+        self._order_worker.finished.connect(self._order_thread.quit)
+        self._order_thread.finished.connect(self._cleanup_order_thread)
+        self._order_thread.start()
+
+    def _cleanup_order_thread(self) -> None:
+        if self._order_thread is not None:
+            self._order_thread.deleteLater()
+        self._order_thread = None
+        self._order_worker = None
+        if self.search_section.loop_order_button.isChecked():
+            self.search_section.loop_order_button.setChecked(False)
+
+    def _on_order_detection_result(self, result: OrderDetectionResult) -> None:
+        status = f"Проверка ордеров: {'найдено' if result.found else 'не найдено'}; строк: {result.row_count}"
+        self.search_section.search_status_label.setText(status)
+        self._logger.info(f"Обнаружение ордеров: {status}; URL={result.url}")
+        if result.found:
+            self._stop_all_cycles_for_order()
+            self._on_order_found(result.url)
+
+    def _on_order_detection_failed(self, message: str) -> None:
+        self._logger.info(f"Обнаружение ордеров: ошибка: {message}")
+        self.search_section.search_status_label.setText(f"Ошибка обнаружения ордеров: {message}")
+        if self.search_section.loop_order_button.isChecked():
+            self.search_section.loop_order_button.setChecked(False)
+
+    def _on_order_detection_finished(self) -> None:
+        self._logger.info("Проверка ордеров завершена.")
+
+    def _stop_all_cycles_for_order(self) -> None:
+        if self._order_worker is not None:
+            self._order_worker.request_stop()
+        if self._cycle_worker is not None:
+            self._cycle_worker.request_stop()
+        if self.search_section.loop_order_button.isChecked():
+            self.search_section.loop_order_button.setChecked(False)
+
+    def _on_order_found(self, url: str) -> None:
+        self._logger.info(f"Новый ордер обнаружен на вкладке: {url}")
+        if self._order_dialog is not None:
+            return
+        self._order_sound.start()
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Уведомление")
+        dialog.setText("новый ордер")
+        dialog.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        seen_button = dialog.addButton("я увидел", QMessageBox.ButtonRole.AcceptRole)
+        self._order_dialog = dialog
+
+        def acknowledge() -> None:
+            self._order_sound.stop()
+            dialog.close()
+            self._order_dialog = None
+
+        seen_button.clicked.connect(acknowledge)
+        dialog.finished.connect(lambda _result: acknowledge() if self._order_dialog is dialog else None)
+        dialog.show()
+
+    def _on_cycle_order_found(self, url: str) -> None:
+        self._stop_all_cycles_for_order()
+        self._on_order_found(url)
 
     def on_stop_search(self) -> None:
         self._controller.stop_merchant_search()
