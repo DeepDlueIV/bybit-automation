@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QGridLayout, QGroupBox, QScrollArea
 
 from bybit_automation.controllers.app_controller import AppController
+from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.models.automation_mode import AutomationMode
 from bybit_automation.models.app_state import AppState
 from bybit_automation.gui.main_window import MainWindow
@@ -39,6 +40,24 @@ def test_main_window_save_and_load_restore_form(qtbot, tmp_path: Path) -> None:
     assert window.advertisement_section.notes_edit.toPlainText() == "Saved note"
     assert window.advertisement_section.security_password_edit.text() == "Secret1337$"
     assert window.search_section.depth_edit.text() == "9"
+
+
+def test_collect_merchants_writes_to_runtime_data_directory(qtbot, tmp_path: Path) -> None:
+    class FakeController(AppController):
+        def collect_all_merchants(self, _state: AppState) -> list[str]:
+            return ["merchant-one", "merchant-two"]
+
+    paths = AppPaths.from_root(tmp_path / "installed")
+    controller = FakeController(JsonSettingsService(paths.settings_file), AppLogger())
+    window = MainWindow(controller=controller, logger=controller._logger, app_paths=paths)
+    qtbot.addWidget(window)
+
+    window.on_collect_merchants()
+
+    assert paths.merchants_temp_file.read_text(encoding="utf-8").splitlines() == [
+        "merchant-one",
+        "merchant-two",
+    ]
 
 
 def test_main_window_has_expected_defaults(qtbot, tmp_path: Path) -> None:

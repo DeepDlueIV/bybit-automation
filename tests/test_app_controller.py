@@ -5,6 +5,7 @@ from pathlib import Path
 from bybit_automation.controllers.app_controller import AppController, position_range_label
 from bybit_automation.infrastructure.paths import AppPaths
 from bybit_automation.models.automation_mode import AutomationMode
+from bybit_automation.models.app_state import AppState
 from bybit_automation.models.merchant_cycle import AdvertisementSnapshot, MerchantSearchResult
 from bybit_automation.models.browser_discovery import BrowserDiscoveryResult, BrowserTabInfo
 from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
@@ -22,6 +23,24 @@ def test_reset_returns_default_state(tmp_path: Path) -> None:
     assert state.advertisement.fixed_price == "80"
     assert state.advertisement.trade_side == "Покупка"
     assert state.browser.browser_name == "Incogniton"
+
+
+def test_controller_can_use_portable_chrome_as_clean_install_default(tmp_path: Path) -> None:
+    default_state = AppState()
+    default_state.browser.browser_name = AutomationMode.PORTABLE_CHROME
+    default_state.browser.automation_mode = AutomationMode.PORTABLE_CHROME
+    controller = AppController(
+        JsonSettingsService(tmp_path / "settings.json"),
+        AppLogger(),
+        default_state=default_state,
+    )
+
+    first = controller.default_state()
+    first.browser.browser_name = "changed"
+    second = controller.default_state()
+
+    assert second.browser.browser_name == AutomationMode.PORTABLE_CHROME
+    assert second.browser.automation_mode == AutomationMode.PORTABLE_CHROME
 
 
 def test_placeholder_action_writes_log_message(tmp_path: Path) -> None:

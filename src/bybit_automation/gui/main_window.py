@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtGui import QAction
@@ -154,7 +153,13 @@ class OrderDetectionWorker(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, controller: AppController, logger: AppLogger, error_sound_notifier: ErrorSoundNotifier | None = None) -> None:
+    def __init__(
+        self,
+        controller: AppController,
+        logger: AppLogger,
+        error_sound_notifier: ErrorSoundNotifier | None = None,
+        app_paths: AppPaths | None = None,
+    ) -> None:
         super().__init__()
         self._controller = controller
         self._logger = logger
@@ -166,7 +171,8 @@ class MainWindow(QMainWindow):
         self._order_thread: QThread | None = None
         self._order_worker: OrderDetectionWorker | None = None
         self._order_dialog: QMessageBox | None = None
-        self._order_sound = LoopSoundNotifier(AppPaths.from_cwd().root_dir / "sound" / "Alarm09.wav")
+        self._app_paths = app_paths or AppPaths.from_runtime()
+        self._order_sound = LoopSoundNotifier(self._app_paths.alarm_sound_file)
         self._log_relay = LogRelay()
 
         self.setWindowTitle("Автоматизация Bybit")
@@ -531,7 +537,8 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage("Мерчанты не найдены")
             return
 
-        temp_path = Path.cwd() / "data" / "merchants_temp.txt"
+        temp_path = self._app_paths.merchants_temp_file
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_text("\n".join(merchants) + "\n", encoding="utf-8")
 
         self._logger.info(f"Собрано мерчантов: {len(merchants)}. Сохранено: {temp_path}")

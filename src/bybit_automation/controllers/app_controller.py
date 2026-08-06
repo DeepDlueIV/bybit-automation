@@ -40,6 +40,7 @@ class AppController:
         merchant_cycle_services: dict[str, MerchantCycleService] | None = None,
         position_sound_notifier: PositionSoundNotifier | None = None,
         app_paths: AppPaths | None = None,
+        default_state: AppState | None = None,
     ) -> None:
         self._settings_service = settings_service
         self._logger = logger
@@ -54,6 +55,7 @@ class AppController:
             self._merchant_cycle_services.setdefault(AutomationMode.INCOGNITON_UIA, merchant_cycle_service)
         self._position_sound_notifier = position_sound_notifier
         self._app_paths = app_paths or AppPaths.from_cwd()
+        self._default_state = AppState.from_dict((default_state or AppState()).to_dict())
         self._last_found_position = 0
         self._last_found_position_range = ""
 
@@ -66,7 +68,7 @@ class AppController:
         return self._last_found_position_range
 
     def default_state(self) -> AppState:
-        return AppState()
+        return AppState.from_dict(self._default_state.to_dict())
 
     def save_settings(self, state: AppState) -> None:
         self._settings_service.save(state)

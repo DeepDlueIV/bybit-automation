@@ -64,8 +64,13 @@ def test_portable_chrome_does_not_launch_duplicate_for_same_profile(tmp_path: Pa
 def test_portable_chrome_reports_missing_prepared_browser(tmp_path: Path) -> None:
     driver = make_driver(tmp_path)
 
-    with pytest.raises(RuntimeError, match="prepare_portable_chrome.py"):
+    with pytest.raises(RuntimeError) as error:
         driver.open_profile("")
+
+    message = str(error.value)
+    assert str(driver._portable_chrome_executable) in message
+    assert "150.0.7871.124" in message
+    assert "запуск.txt" in message
 
 
 def test_portable_chrome_discovery_uses_own_browser_name(tmp_path: Path, monkeypatch) -> None:

@@ -47,8 +47,10 @@ class PortableChromeBrowserDriver(PlaywrightBrowserDriver):
         chrome_executable = self._find_chrome_executable()
         if chrome_executable is None:
             raise RuntimeError(
-                "Portable Chrome не подготовлен. Выполни из корня проекта: "
-                "python scripts/prepare_portable_chrome.py"
+                f"Portable Chrome {PORTABLE_CHROME_VERSION} не найден. "
+                f"Ожидаемый файл: {self._portable_chrome_executable}. "
+                "Открой запуск.txt в корне программы; для исходников в нём указана "
+                "команда подготовки, для установленной версии требуется переустановка."
             )
         existing_port = self._find_existing_debug_port()
         if existing_port is not None:

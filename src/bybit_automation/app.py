@@ -13,8 +13,10 @@ def _ensure_sta_com() -> None:
 _ensure_sta_com()
 
 from bybit_automation.controllers.app_controller import AppController
+from bybit_automation.diagnostics.runtime_preflight import run_runtime_preflight
 from bybit_automation.gui.main_window import MainWindow
 from bybit_automation.infrastructure.paths import AppPaths
+from bybit_automation.models.app_state import AppState
 from bybit_automation.services.logging_service import AppLogger
 from bybit_automation.services.settings_service import JsonSettingsService
 
@@ -30,7 +32,8 @@ def build_main_window() -> MainWindow:
     from bybit_automation.services.merchant_cycle_service import MerchantCycleService
     from bybit_automation.services.sound_notifier import ErrorSoundNotifier, AccountFoundSoundNotifier
 
-    app_paths = AppPaths.from_cwd()
+    app_paths = AppPaths.from_runtime()
+    runtime_preflight = run_runtime_preflight(app_paths)
     logger = AppLogger(log_file=app_paths.log_file)
     settings_service = JsonSettingsService(app_paths.settings_file)
     browser_discovery_service = BrowserDiscoveryService(finder=WindowsBrowserFinder())
@@ -129,8 +132,26 @@ def build_main_window() -> MainWindow:
         merchant_cycle_services=merchant_cycle_services,
         position_sound_notifier=position_sound_notifier,
         app_paths=app_paths,
+        default_state=AppState.from_dict(
+            {
+                "browser": {
+                    "browser_name": AutomationMode.PORTABLE_CHROME,
+                    "automation_mode": AutomationMode.PORTABLE_CHROME,
+                }
+            }
+        ),
     )
-    return MainWindow(controller=controller, logger=logger, error_sound_notifier=error_sound_notifier)
+    window = MainWindow(
+        controller=controller,
+        logger=logger,
+        error_sound_notifier=error_sound_notifier,
+        app_paths=app_paths,
+    )
+    logger.info(runtime_preflight.summary)
+    window.status_bar.showMessage(
+        "Среда готова" if runtime_preflight.ok else "Среда не готова — подробности в логе"
+    )
+    return window
 
 
 def main() -> int:
