@@ -1,4 +1,26 @@
-data/playwright-profile/
-data/playwright-artifacts/
+# Runtime-данные, настройки, логи и браузерные профили
+data/
+
+# Локальные окружения Python
+.venv/
+venv/
+
+# Python и тестовые кэши
 __pycache__/
+*.py[cod]
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Результаты сборки
+build/
+dist/
+*.egg-info/
+
+# Диагностические результаты браузеров
+playwright-report/
+test-results/
+
+# Локальные логи
+*.log
