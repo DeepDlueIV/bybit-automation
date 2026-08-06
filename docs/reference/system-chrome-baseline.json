@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "reference_name": "System Chrome browser + CDP + Playwright automation chain",
+  "captured_at": "2026-08-07T02:34:57+07:00",
+  "protected_implementation_commit": "3c9c89ed3ae305d28be7f701cb5051091ccacacb",
+  "benchmark": {
+    "browser": "System Chrome",
+    "automation_mode": "System Chrome extensions profile",
+    "connection": "external Chrome process -> Playwright connect_over_cdp",
+    "profile": "dedicated persistent profile",
+    "extension_is_part_of_benchmark": false
+  },
+  "required_chrome_flags": [
+    "--remote-debugging-port",
+    "--user-data-dir",
+    "--remote-allow-origins=*",
+    "--start-maximized",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "about:blank"
+  ],
+  "required_checks": {
+    "process_found": true,
+    "profile_matches": true,
+    "required_flags_present": true,
+    "cdp_reachable": true,
+    "playwright_connected": true,
+    "automation_dom_read": true,
+    "browser_survived_probe": true
+  },
+  "observed_runtime": {
+    "chrome_version": "151.0.7922.76",
+    "playwright_version": "1.61.0",
+    "python_version": "3.14.3",
+    "cdp_protocol_version": "1.3",
+    "cdp_port": "dynamic",
+    "page_count_sample": 10,
+    "target_count_sample": 25
+  },
+  "explicitly_not_part_of_benchmark": [
+    "extension name",
+    "extension version",
+    "extension installation method"
+  ],
+  "raw_runtime_capture": "data/system-chrome-baseline/latest.json"
+}
