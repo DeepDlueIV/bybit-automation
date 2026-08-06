@@ -9,6 +9,11 @@ dependencies = [
     "pywinauto==0.6.9",
 ]
 
+[project.optional-dependencies]
+build = [
+    "pyinstaller==6.21.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"
