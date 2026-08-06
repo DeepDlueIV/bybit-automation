@@ -139,15 +139,40 @@ def test_release_instructions_reject_stale_installer_version(tmp_path: Path) -> 
 
     (tmp_path / "docs").mkdir()
     (tmp_path / "запуск.txt").write_text(
-        "BybitAutomation-Setup-0.1.0.exe",
+        "BybitAutomation-Setup-0.2.0.exe",
         encoding="utf-8",
     )
     (tmp_path / "docs" / "build-windows-installer.md").write_text(
-        "BybitAutomation-Setup-0.1.0.exe",
+        "BybitAutomation-Setup-0.2.0.exe",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "github-release-checklist.md").write_text(
+        "BybitAutomation-Setup-0.1.0.exe\nBybitAutomation-Setup-0.2.0.exe",
         encoding="utf-8",
     )
 
     with pytest.raises(RuntimeError, match="BybitAutomation-Setup-0.2.0.exe"):
+        validate_release_instruction_versions(tmp_path, app_version="0.2.0")
+
+
+def test_release_instructions_reject_stale_release_tag(tmp_path: Path) -> None:
+    from bybit_automation.packaging.release import validate_release_instruction_versions
+
+    (tmp_path / "docs").mkdir()
+    for relative_path in (
+        Path("запуск.txt"),
+        Path("docs/build-windows-installer.md"),
+    ):
+        (tmp_path / relative_path).write_text(
+            "BybitAutomation-Setup-0.2.0.exe",
+            encoding="utf-8",
+        )
+    (tmp_path / "docs" / "github-release-checklist.md").write_text(
+        "BybitAutomation-Setup-0.2.0.exe\nv0.1.0",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="v0.2.0"):
         validate_release_instruction_versions(tmp_path, app_version="0.2.0")
 
 
@@ -157,7 +182,48 @@ def test_release_instructions_use_project_version() -> None:
     expected_name = f"BybitAutomation-Setup-{app_version}.exe"
     instruction = Path("запуск.txt").read_text(encoding="utf-8")
     build_instruction = Path("docs/build-windows-installer.md").read_text(encoding="utf-8")
+    release_checklist = Path("docs/github-release-checklist.md").read_text(encoding="utf-8")
 
     assert expected_name in instruction
     assert expected_name in build_instruction
+    assert expected_name in release_checklist
     assert "BybitAutomation-Setup.exe" not in instruction
+
+
+def test_user_instruction_explains_install_paths_and_destructive_uninstall() -> None:
+    instruction = Path("запуск.txt").read_text(encoding="utf-8")
+    normalized = " ".join(instruction.split())
+
+    assert r"%LOCALAPPDATA%\BybitAutomation" in instruction
+    assert "ГДЕ_НАХОДЯТСЯ_ФАЙЛЫ.txt" in instruction
+    assert "установщик создаёт" in normalized
+    assert "удаление программы удаляет папку data" in normalized.casefold()
+    assert "резервную копию" in instruction
+    assert instruction.index("ГОТОВЫЙ УСТАНОВЩИК") < instruction.index("ЗАПУСК ИЗ ИСХОДНИКОВ")
+
+
+def test_github_release_checklist_defines_only_required_assets() -> None:
+    checklist = Path("docs/github-release-checklist.md").read_text(encoding="utf-8")
+
+    assert "BybitAutomation-Setup-0.1.0.exe" in checklist
+    assert "release-manifest.json" in checklist
+    assert "Get-FileHash" in checklist
+    assert "не публиковать" in checklist
+    assert "профили браузера" in checklist
+
+
+def test_github_release_checklist_binds_release_to_tagged_commit() -> None:
+    checklist = Path("docs/github-release-checklist.md").read_text(encoding="utf-8")
+
+    assert "v0.1.0" in checklist
+    assert "git rev-parse HEAD" in checklist
+    assert "git rev-list -n 1 v0.1.0" in checklist
+    assert "совпад" in checklist.casefold()
+
+
+def test_portable_chrome_documentation_describes_current_installer() -> None:
+    documentation = Path("docs/portable-chrome.md").read_text(encoding="utf-8")
+
+    assert "Для установленной версии" in documentation
+    assert "включён в Windows-установщик" in documentation
+    assert "будущ" not in documentation.casefold()

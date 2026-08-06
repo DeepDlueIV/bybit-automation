@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 import winreg
@@ -170,9 +171,30 @@ def validate_release_instruction_versions(root_dir: Path, *, app_version: str) -
     instruction_paths = (
         root_dir / "запуск.txt",
         root_dir / "docs" / "build-windows-installer.md",
+        root_dir / "docs" / "github-release-checklist.md",
     )
     for path in instruction_paths:
-        if not path.is_file() or expected_name not in path.read_text(encoding="utf-8"):
+        if not path.is_file():
             raise RuntimeError(
                 f"Инструкция {path} должна содержать актуальное имя {expected_name}"
             )
+        text = path.read_text(encoding="utf-8")
+        installer_names = set(
+            re.findall(
+                r"BybitAutomation-Setup(?:-[0-9A-Za-z][0-9A-Za-z.+-]*)?\.exe",
+                text,
+            )
+        )
+        if installer_names != {expected_name}:
+            raise RuntimeError(
+                f"Инструкция {path} должна содержать только актуальное имя {expected_name}; "
+                f"обнаружено: {sorted(installer_names)}"
+            )
+    release_checklist = instruction_paths[-1].read_text(encoding="utf-8")
+    expected_tag = f"v{app_version}"
+    release_tags = set(re.findall(r"\bv[0-9][0-9A-Za-z.+-]*\b", release_checklist))
+    if release_tags != {expected_tag}:
+        raise RuntimeError(
+            f"Release checklist должен содержать только актуальный тег {expected_tag}; "
+            f"обнаружено: {sorted(release_tags)}"
+        )
