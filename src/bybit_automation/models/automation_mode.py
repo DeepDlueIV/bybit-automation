@@ -8,6 +8,7 @@ class AutomationMode:
     PLAYWRIGHT_CHROMIUM_EXTENSIONS = "Playwright Chromium + extensions"
     SYSTEM_CHROME_EXTENSIONS_PROFILE = "System Chrome extensions profile"
     SYSTEM_CHROME_EXTENSIONS_RECOVERY = "System Chrome extensions profile (restart recovery)"
+    PORTABLE_CHROME = "Portable Chrome 150"
 
     @classmethod
     def choices(cls) -> list[str]:
@@ -18,5 +19,6 @@ class AutomationMode:
             cls.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
             cls.SYSTEM_CHROME_EXTENSIONS_PROFILE,
             cls.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+            cls.PORTABLE_CHROME,
         ]
 

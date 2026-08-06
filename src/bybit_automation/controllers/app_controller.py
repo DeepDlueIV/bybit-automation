@@ -90,6 +90,7 @@ class AppController:
             AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
             AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
             AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+            AutomationMode.PORTABLE_CHROME,
         }
         if state.browser.automation_mode not in profile_modes:
             self._logger.info("Profile opener is available only for Playwright/System Chrome profile modes.")
@@ -124,6 +125,7 @@ class AppController:
         if state.browser.automation_mode in {
             AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
             AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+            AutomationMode.PORTABLE_CHROME,
         }:
             browser_service = self._browser_service_for(state)
             if browser_service is not None and hasattr(browser_service, "discover_profile"):

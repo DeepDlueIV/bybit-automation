@@ -25,6 +25,14 @@ class AppPaths:
         return self.data_dir / "system-chrome-extensions-profile"
 
     @property
+    def portable_chrome_profile_dir(self) -> Path:
+        return self.data_dir / "portable-chrome-profile"
+
+    @property
+    def portable_chrome_executable(self) -> Path:
+        return self.root_dir / "runtime" / "chrome-for-testing" / "chrome-win64" / "chrome.exe"
+
+    @property
     def bridge_extension_dir(self) -> Path:
         bybiteye_dir = self.root_dir / "bybiteye extension"
         if bybiteye_dir.exists():

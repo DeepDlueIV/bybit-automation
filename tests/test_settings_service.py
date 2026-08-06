@@ -35,6 +35,10 @@ def test_app_paths_exposes_playwright_runtime_dirs(tmp_path: Path) -> None:
     assert paths.playwright_profile_dir == tmp_path / "data" / "playwright-profile"
     assert paths.playwright_artifacts_dir == tmp_path / "data" / "playwright-artifacts"
     assert paths.bridge_extension_dir == tmp_path / "data" / "bridge-extension"
+    assert paths.portable_chrome_profile_dir == tmp_path / "data" / "portable-chrome-profile"
+    assert paths.portable_chrome_executable == (
+        tmp_path / "runtime" / "chrome-for-testing" / "chrome-win64" / "chrome.exe"
+    )
 
 
 def test_app_paths_finds_nested_bybiteye_extension_manifest(tmp_path: Path) -> None:

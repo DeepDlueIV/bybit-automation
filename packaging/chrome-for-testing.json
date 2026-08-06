@@ -1,0 +1,11 @@
+{
+  "version": "150.0.7871.124",
+  "revision": "1639810",
+  "platform": "win64",
+  "source_api": "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json",
+  "url": "https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.124/win64/chrome-win64.zip",
+  "archive_size": 194944166,
+  "archive_sha256": "65fff74a602e0487fac43a148229b56d859070ac1b0e3d002d21d8edae3cfafe",
+  "executable_relative_path": "chrome-win64/chrome.exe",
+  "executable_sha256": "d841736149b4c730c7ccf7e9165e9547396b92120258bcb2b9ca1253873e726a"
+}

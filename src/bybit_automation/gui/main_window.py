@@ -319,6 +319,11 @@ class MainWindow(QMainWindow):
         """Синхронизирует тип окна с профилем, который фактически запускает этот режим."""
         mode = self.browser_section.automation_mode_combo.currentText()
         browser_name = self.browser_section.browser_combo.currentText()
+        if mode == AutomationMode.PORTABLE_CHROME:
+            if browser_name != "Portable Chrome 150":
+                self.browser_section.browser_combo.setCurrentText("Portable Chrome 150")
+                self._logger.info("Portable Chrome 150 использует встроенный закреплённый браузер.")
+            return "Portable Chrome 150"
         if mode not in {
             AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
             AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,

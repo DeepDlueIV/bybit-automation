@@ -20,7 +20,7 @@ class BrowserSection(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.browser_combo = QComboBox()
-        self.browser_combo.addItems(["Incogniton", "System Chrome", "Playwright Chromium"])
+        self.browser_combo.addItems(["Incogniton", "System Chrome", "Playwright Chromium", "Portable Chrome 150"])
         self.automation_mode_combo = QComboBox()
         self.automation_mode_combo.addItems(AutomationMode.choices())
         self.ads_tab_label = QLabel("Не подключено")

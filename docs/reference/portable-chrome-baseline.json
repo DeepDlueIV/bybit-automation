@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "reference_name": "Portable Chrome 150 browser + CDP + Playwright automation chain",
+  "captured_at": "2026-08-07T02:56:45+07:00",
+  "browser": {
+    "name": "Portable Chrome 150",
+    "version": "150.0.7871.124",
+    "platform": "win64",
+    "archive_sha256": "65fff74a602e0487fac43a148229b56d859070ac1b0e3d002d21d8edae3cfafe",
+    "executable_sha256": "d841736149b4c730c7ccf7e9165e9547396b92120258bcb2b9ca1253873e726a"
+  },
+  "automation": {
+    "mode": "Portable Chrome 150",
+    "playwright_version": "1.61.0",
+    "connection": "external Chrome process -> Playwright connect_over_cdp",
+    "profile": "dedicated persistent profile",
+    "extension_is_part_of_benchmark": false
+  },
+  "required_checks": {
+    "process_found": true,
+    "profile_matches": true,
+    "required_flags_present": true,
+    "cdp_reachable": true,
+    "playwright_connected": true,
+    "automation_dom_read": true,
+    "browser_survived_probe": true
+  },
+  "site_smoke_check": {
+    "wait_after_disconnect_seconds": 5,
+    "browser_alive": true,
+    "cdp_alive": true,
+    "sites": {
+      "https://example.com": 200,
+      "https://playwright.dev": 200,
+      "https://www.bybit.com": 200
+    }
+  },
+  "raw_runtime_capture": "data/portable-chrome-baseline/latest.json"
+}

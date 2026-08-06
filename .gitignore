@@ -22,5 +22,10 @@ dist/
 playwright-report/
 test-results/
 
+# Загружаемый Portable Chrome (входит в установщик, но не в Git)
+runtime/chrome-for-testing/
+runtime/.chrome-*.zip
+runtime/.chrome-for-testing-*.tmp/
+
 # Локальные логи
 *.log

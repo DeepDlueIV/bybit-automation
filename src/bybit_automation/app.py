@@ -22,6 +22,7 @@ from bybit_automation.services.settings_service import JsonSettingsService
 def build_main_window() -> MainWindow:
     from bybit_automation.infrastructure.existing_browser_window_driver import ExistingBrowserWindowDriver
     from bybit_automation.infrastructure.playwright_browser_driver import PlaywrightBrowserDriver
+    from bybit_automation.infrastructure.portable_chrome_browser_driver import PortableChromeBrowserDriver
     from bybit_automation.infrastructure.windows_browser_finder import WindowsBrowserFinder
     from bybit_automation.models.automation_mode import AutomationMode
     from bybit_automation.services.browser_discovery_service import BrowserDiscoveryService
@@ -74,6 +75,15 @@ def build_main_window() -> MainWindow:
         ),
         logger=logger,
     )
+    portable_chrome_service = BybitExistingBrowserService(
+        driver=PortableChromeBrowserDriver(
+            logger=logger,
+            chrome_executable=app_paths.portable_chrome_executable,
+            user_data_dir=app_paths.portable_chrome_profile_dir,
+            artifacts_dir=app_paths.playwright_artifacts_dir,
+        ),
+        logger=logger,
+    )
     incogniton_cdp_service = BybitExistingBrowserService(
         driver=PlaywrightBrowserDriver(
             logger=logger,
@@ -90,6 +100,7 @@ def build_main_window() -> MainWindow:
         AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS: playwright_chromium_extensions_service,
         AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE: system_chrome_extensions_service,
         AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY: system_chrome_extensions_recovery_service,
+        AutomationMode.PORTABLE_CHROME: portable_chrome_service,
     }
     position_sound_notifier = AccountFoundSoundNotifier(on_playback=lambda mode: logger.info("Звуковое уведомление: системный Windows." if mode == "system" else "Звуковое уведомление: fallback beep."))
     error_sound_notifier = ErrorSoundNotifier()

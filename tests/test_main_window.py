@@ -138,6 +138,7 @@ def test_browser_section_exposes_automation_modes(qtbot) -> None:
         AutomationMode.PLAYWRIGHT_CHROMIUM_EXTENSIONS,
         AutomationMode.SYSTEM_CHROME_EXTENSIONS_PROFILE,
         AutomationMode.SYSTEM_CHROME_EXTENSIONS_RECOVERY,
+        AutomationMode.PORTABLE_CHROME,
     ]
 
     section.automation_mode_combo.setCurrentText(AutomationMode.PLAYWRIGHT_PROFILE)
@@ -151,7 +152,20 @@ def test_browser_section_exposes_supported_browsers_only(qtbot) -> None:
 
     browsers = [section.browser_combo.itemText(index) for index in range(section.browser_combo.count())]
 
-    assert browsers == ["Incogniton", "System Chrome", "Playwright Chromium"]
+    assert browsers == ["Incogniton", "System Chrome", "Playwright Chromium", "Portable Chrome 150"]
+
+
+def test_portable_chrome_mode_selects_portable_browser(qtbot, tmp_path: Path) -> None:
+    controller = AppController(JsonSettingsService(tmp_path / "settings.json"), AppLogger())
+    window = MainWindow(controller=controller, logger=controller._logger)
+    qtbot.addWidget(window)
+    window.browser_section.browser_combo.setCurrentText("System Chrome")
+    window.browser_section.automation_mode_combo.setCurrentText(AutomationMode.PORTABLE_CHROME)
+
+    browser_name = window._browser_name_for_selected_automation()
+
+    assert browser_name == "Portable Chrome 150"
+    assert window.browser_section.browser_combo.currentText() == "Portable Chrome 150"
 
 
 def test_browser_section_has_only_open_and_check_browser_controls(qtbot) -> None:
