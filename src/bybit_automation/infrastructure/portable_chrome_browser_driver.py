@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import socket
 import subprocess
 from pathlib import Path
 
@@ -41,6 +42,25 @@ class PortableChromeBrowserDriver(PlaywrightBrowserDriver):
             return self._portable_chrome_executable
         return None
 
+    @property
+    def _cdp_port_file(self) -> Path:
+        return self._user_data_dir / "bybit-automation-cdp-port.txt"
+
+    def _cdp_port_is_open(self, port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+
+    def _find_existing_debug_port(self) -> int | None:
+        try:
+            saved_port = int(self._cdp_port_file.read_text(encoding="ascii").strip())
+        except (FileNotFoundError, OSError, ValueError):
+            saved_port = 0
+        if 1 <= saved_port <= 65535 and self._cdp_port_is_open(saved_port):
+            self._log(f"Portable Chrome: использую сохранённый CDP-порт {saved_port}.")
+            return saved_port
+        return None
+
     def open_profile(self, window_title: str) -> None:
         del window_title
         self._user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -63,6 +83,7 @@ class PortableChromeBrowserDriver(PlaywrightBrowserDriver):
         )
         self._log(f"открываю Portable Chrome {PORTABLE_CHROME_VERSION}: {command}")
         subprocess.Popen(command)
+        self._cdp_port_file.write_text(f"{port}\n", encoding="ascii")
 
     def discover_profile(self) -> BrowserDiscoveryResult:
         result = super().discover_profile()

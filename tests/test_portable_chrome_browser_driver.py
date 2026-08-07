@@ -46,6 +46,33 @@ def test_portable_chrome_opens_external_process_with_dedicated_profile(tmp_path:
         "about:blank",
     ]]
     assert "--disable-extensions" not in launched_commands[0]
+    assert (driver._user_data_dir / "bybit-automation-cdp-port.txt").read_text(encoding="ascii") == "54321\n"
+
+
+def test_portable_chrome_reuses_saved_live_cdp_port(tmp_path: Path, monkeypatch) -> None:
+    driver = make_driver(tmp_path)
+    driver._user_data_dir.mkdir(parents=True)
+    (driver._user_data_dir / "bybit-automation-cdp-port.txt").write_text("54321\n", encoding="ascii")
+    monkeypatch.setattr(driver, "_cdp_port_is_open", lambda port: port == 54321)
+    monkeypatch.setattr(
+        "bybit_automation.infrastructure.playwright_browser_driver.PlaywrightBrowserDriver._find_existing_debug_port",
+        lambda _driver: (_ for _ in ()).throw(AssertionError("PowerShell fallback must not run")),
+    )
+
+    assert driver._find_existing_debug_port() == 54321
+
+
+def test_portable_chrome_ignores_stale_saved_cdp_port(tmp_path: Path, monkeypatch) -> None:
+    driver = make_driver(tmp_path)
+    driver._user_data_dir.mkdir(parents=True)
+    (driver._user_data_dir / "bybit-automation-cdp-port.txt").write_text("54321\n", encoding="ascii")
+    monkeypatch.setattr(driver, "_cdp_port_is_open", lambda _port: False)
+    monkeypatch.setattr(
+        "bybit_automation.infrastructure.playwright_browser_driver.PlaywrightBrowserDriver._find_existing_debug_port",
+        lambda _driver: (_ for _ in ()).throw(AssertionError("Portable Chrome must not guess ports via PowerShell")),
+    )
+
+    assert driver._find_existing_debug_port() is None
 
 
 def test_portable_chrome_does_not_launch_duplicate_for_same_profile(tmp_path: Path, monkeypatch) -> None:

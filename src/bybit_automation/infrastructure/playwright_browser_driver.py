@@ -220,6 +220,7 @@ class PlaywrightBrowserDriver:
                 text=True,
                 check=False,
                 timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception:
             return []
